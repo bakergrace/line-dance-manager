@@ -34,17 +34,23 @@ const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 const BASE_URL = 'https://cors-anywhere.herokuapp.com/https://api.bootstepper.com';
 
 export default function MasterController() {
-  const [currentTab, setCurrentTab] = useState<'search' | 'playlists'>('search'); // New Tab State
+  const [currentTab, setCurrentTab] = useState<'search' | 'playlists'>('search');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
   const [selectedDance, setSelectedDance] = useState<Dance | null>(null);
+  
+  // Updated playlist names to exact lowercase strings
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const saved = localStorage.getItem('dance_mgr_v10');
-    return saved ? JSON.parse(saved) : { "Dances I Know": [], "Dances I Kinda Know": [], "Dances I Want to Know": [] };
+    const saved = localStorage.getItem('dance_mgr_v11');
+    return saved ? JSON.parse(saved) : { 
+      "dances i know": [], 
+      "dances i kinda know": [], 
+      "dances i want to know": [] 
+    };
   });
 
   useEffect(() => {
-    localStorage.setItem('dance_mgr_v10', JSON.stringify(playlists));
+    localStorage.setItem('dance_mgr_v11', JSON.stringify(playlists));
   }, [playlists]);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -89,7 +95,6 @@ export default function MasterController() {
     }));
   };
 
-  // --- SUB-VIEW: INDIVIDUAL DANCE PAGE ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: '#184C78', minHeight: '100vh', color: 'white', padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
@@ -97,18 +102,18 @@ export default function MasterController() {
           ← Back
         </button>
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: 'rgba(255,255,255,0.1)', padding: '30px', borderRadius: '15px' }}>
-          <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700 }}>{selectedDance.title}</h1>
+          <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700, fontStyle: 'normal' }}>{selectedDance.title}</h1>
           <div style={{ color: '#fbbf24', fontWeight: 'bold', marginBottom: '20px' }}>
             {selectedDance.difficultyLevel} • {selectedDance.counts} Counts • {selectedDance.wallCount} Walls
           </div>
           <p><strong>Song:</strong> {selectedDance.songTitle}</p>
           <p><strong>Artist:</strong> {selectedDance.songArtist}</p>
           <div style={{ marginTop: '30px' }}>
-            <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>Add to:</h3>
+            <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>add to:</h3>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              <button onClick={() => addToPlaylist(selectedDance, "Dances I Know")} style={{ flex: '1 1 100px', backgroundColor: '#16a34a', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>KNOW</button>
-              <button onClick={() => addToPlaylist(selectedDance, "Dances I Kinda Know")} style={{ flex: '1 1 100px', backgroundColor: '#ca8a04', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>KINDA</button>
-              <button onClick={() => addToPlaylist(selectedDance, "Dances I Want to Know")} style={{ flex: '1 1 100px', backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>WANT</button>
+              <button onClick={() => addToPlaylist(selectedDance, "dances i know")} style={{ flex: '1 1 100px', backgroundColor: '#16a34a', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>KNOW</button>
+              <button onClick={() => addToPlaylist(selectedDance, "dances i kinda know")} style={{ flex: '1 1 100px', backgroundColor: '#ca8a04', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>KINDA</button>
+              <button onClick={() => addToPlaylist(selectedDance, "dances i want to know")} style={{ flex: '1 1 100px', backgroundColor: '#2563eb', color: 'white', border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>WANT</button>
             </div>
           </div>
         </div>
@@ -120,46 +125,18 @@ export default function MasterController() {
     <div style={{ backgroundColor: '#184C78', minHeight: '100vh', color: 'white', padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
       <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center' }}>
         
-        <h1 style={{ fontSize: '3rem', marginBottom: '20px', fontWeight: 700 }}>BootStepper</h1>
+        <h1 style={{ fontSize: '3.5rem', marginBottom: '20px', fontWeight: 700, fontStyle: 'normal' }}>BootStepper</h1>
 
-        {/* --- NAVIGATION TABS --- */}
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '30px', borderBottom: '1px solid rgba(255,255,255,0.2)' }}>
-          <button 
-            onClick={() => setCurrentTab('search')} 
-            style={{ 
-              padding: '10px 30px', 
-              background: 'none', 
-              color: currentTab === 'search' ? '#fbbf24' : 'white', 
-              border: 'none', 
-              borderBottom: currentTab === 'search' ? '3px solid #fbbf24' : 'none', 
-              fontWeight: 'bold', 
-              cursor: 'pointer' 
-            }}
-          >
-            SEARCH
-          </button>
-          <button 
-            onClick={() => setCurrentTab('playlists')} 
-            style={{ 
-              padding: '10px 30px', 
-              background: 'none', 
-              color: currentTab === 'playlists' ? '#fbbf24' : 'white', 
-              border: 'none', 
-              borderBottom: currentTab === 'playlists' ? '3px solid #fbbf24' : 'none', 
-              fontWeight: 'bold', 
-              cursor: 'pointer' 
-            }}
-          >
-            MY PLAYLISTS
-          </button>
+          <button onClick={() => setCurrentTab('search')} style={{ padding: '10px 30px', background: 'none', color: currentTab === 'search' ? '#fbbf24' : 'white', border: 'none', borderBottom: currentTab === 'search' ? '3px solid #fbbf24' : 'none', fontWeight: 'bold', cursor: 'pointer' }}>SEARCH</button>
+          <button onClick={() => setCurrentTab('playlists')} style={{ padding: '10px 30px', background: 'none', color: currentTab === 'playlists' ? '#fbbf24' : 'white', border: 'none', borderBottom: currentTab === 'playlists' ? '3px solid #fbbf24' : 'none', fontWeight: 'bold', cursor: 'pointer' }}>MY PLAYLISTS</button>
         </div>
 
-        {/* --- TAB CONTENT: SEARCH --- */}
         {currentTab === 'search' && (
           <div>
             <form onSubmit={handleSearch} style={{ marginBottom: '30px' }}>
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: 'none' }} />
-              <button type="submit" style={{ padding: '12px 20px', backgroundColor: '#fbbf24', border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>GO</button>
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: 'none', fontFamily: "'Roboto', sans-serif" }} />
+              <button type="submit" style={{ padding: '12px 20px', backgroundColor: '#fbbf24', border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', fontFamily: "'Roboto', sans-serif" }}>GO</button>
             </form>
 
             {results.length > 0 && (
@@ -175,12 +152,11 @@ export default function MasterController() {
           </div>
         )}
 
-        {/* --- TAB CONTENT: PLAYLISTS --- */}
         {currentTab === 'playlists' && (
           <div style={{ textAlign: 'left' }}>
             {Object.entries(playlists).map(([name, list]) => (
               <div key={name} style={{ marginBottom: '30px' }}>
-                <h2 style={{ fontSize: '1.4rem', borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '10px' }}>{name} ({list.length})</h2>
+                <h2 style={{ fontSize: '1.4rem', borderBottom: '1px solid rgba(255,255,255,0.2)', paddingBottom: '10px', fontWeight: 700 }}>{name} ({list.length})</h2>
                 {list.length === 0 ? (
                   <p style={{ opacity: 0.5, fontStyle: 'italic' }}>No dances added yet.</p>
                 ) : (
@@ -190,7 +166,7 @@ export default function MasterController() {
                         <div style={{ fontWeight: 'bold' }}>{d.title}</div>
                         <div style={{ fontSize: '12px', opacity: 0.7 }}>{d.difficultyLevel} • {d.counts}c</div>
                       </div>
-                      <button onClick={() => removeFromPlaylist(d.id, name)} style={{ background: 'none', color: '#ef4444', border: '1px solid #ef4444', padding: '5px 10px', borderRadius: '4px', fontSize: '12px' }}>REMOVE</button>
+                      <button onClick={() => removeFromPlaylist(d.id, name)} style={{ background: 'none', color: '#ef4444', border: '1px solid #ef4444', padding: '5px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold' }}>REMOVE</button>
                     </div>
                   ))
                 )}

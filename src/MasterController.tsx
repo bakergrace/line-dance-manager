@@ -8,9 +8,9 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut, 
-  GoogleAuthProvider, 
   onAuthStateChanged
 } from "firebase/auth";
+import { GoogleAuthProvider } from "firebase/auth";
 import type { User } from "firebase/auth";
 
 import { 
@@ -32,8 +32,8 @@ export interface Dance {
   counts: number;
   songTitle: string;
   songArtist: string;
-  stepSheetId?: string; // ID needed to fetch the sheet
-  stepSheetContent?: string; // The actual text content
+  stepSheetId?: string; 
+  stepSheetContent?: string; 
   wallCount: number;
 }
 
@@ -63,7 +63,6 @@ const firebaseConfig = {
   measurementId: "G-WV254NV2C7"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
@@ -77,17 +76,16 @@ const COLORS = {
   PRIMARY: '#36649A',
   SECONDARY: '#D99AB1',
   WHITE: '#FFFFFF',
-  SUCCESS: '#4CAF50', // Green
-  WARNING: '#FFC107', // Amber
-  DANGER: '#F44336',  // Red
-  NEUTRAL: '#9E9E9E'  // Grey
+  SUCCESS: '#4CAF50', 
+  WARNING: '#FFC107', 
+  DANGER: '#F44336',  
+  NEUTRAL: '#9E9E9E'  
 };
 
 const STORAGE_KEYS = {
   PERMANENT: 'bootstepper_permanent_storage'
 };
 
-// Helper to determine difficulty color
 const getDifficultyColor = (level: string) => {
   const l = level.toLowerCase();
   if (l.includes('beginner') || l.includes('absolute')) return COLORS.SUCCESS;
@@ -105,46 +103,77 @@ export default function MasterController() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
-  // Auth State
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
 
-  // Playlist Management State
+  // --- CRITICAL FIX: SAFETY LOCK ---
+  // This state prevents the app from saving empty data while it's still starting up.
+  const [isDataLoaded, setIsDataLoaded] = useState(false);
+
   const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>({
-      "dances i know": [],
-      "dances i kinda know": [],
-      "dances i want to know": []
+
+  // --- CRITICAL FIX: LAZY INITIALIZATION ---
+  // We initialize state directly from localStorage so it NEVER starts as empty.
+  const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
+    try {
+      const local = localStorage.getItem(STORAGE_KEYS.PERMANENT);
+      return local ? JSON.parse(local) : {
+        "dances i know": [],
+        "dances i kinda know": [],
+        "dances i want to know": []
+      };
+    } catch (e) {
+      return {
+        "dances i know": [],
+        "dances i kinda know": [],
+        "dances i want to know": []
+      };
+    }
   });
 
   // --- AUTH & CLOUD SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
+      
       if (currentUser) {
-        const docRef = doc(db, "users", currentUser.uid);
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          setPlaylists(docSnap.data() as { [key: string]: Dance[] });
-        } else {
-          await setDoc(docRef, playlists);
+        // LOGGED IN: Fetch cloud data
+        try {
+          const docRef = doc(db, "users", currentUser.uid);
+          const docSnap = await getDoc(docRef);
+          
+          if (docSnap.exists()) {
+            // Cloud has data -> Load it and overwrite local (Sync Source of Truth)
+            const cloudData = docSnap.data() as { [key: string]: Dance[] };
+            setPlaylists(cloudData);
+          } else {
+            // New cloud user -> Save what we currently have in local to the cloud
+            await setDoc(docRef, playlists);
+          }
+        } catch (error) {
+          console.error("Sync Error:", error);
         }
-      } else {
-        const local = localStorage.getItem(STORAGE_KEYS.PERMANENT);
-        if (local) setPlaylists(JSON.parse(local));
-      }
+      } 
+      
+      // Mark initialization as complete. Now it is safe to save changes.
+      setIsDataLoaded(true);
     });
     return () => unsubscribe();
   }, []);
 
+  // --- DATA SAVER ---
   useEffect(() => {
+    // 1. Always save to LocalStorage (Immediate Backup)
     localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-    if (user) {
+
+    // 2. SAFETY CHECK: Only save to Cloud if we have finished loading the initial data.
+    // This prevents the "empty init" from overwriting the database.
+    if (user && isDataLoaded) {
       setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
     }
-  }, [playlists, user]);
+  }, [playlists, user, isDataLoaded]);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
@@ -157,9 +186,6 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- API FUNCTIONS ---
-  
-  // 1. Search (Limit increased to 50 for broader results)
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query) return;
@@ -175,54 +201,45 @@ export default function MasterController() {
         difficultyLevel: item.difficultyLevel || "unknown",
         counts: item.counts ?? item.count ?? 0,
         wallCount: Number(item.walls ?? item.wallCount ?? 0),
-        stepSheetId: item.stepSheetId, // Store ID for later
+        stepSheetId: item.stepSheetId, 
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
     } catch (err) { console.error(err); }
   };
 
-  // 2. Select Dance (Fetches full details + Step Sheet)
   const handleSelectDance = async (basicDance: Dance) => {
-    // Set immediate info so UI feels responsive
     setSelectedDance(basicDance);
 
     try {
-      // A. Fetch Full Details via getById to ensure we have the StepSheet ID
       const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const details = await detailsRes.json();
       const sheetId = details.stepSheetId || basicDance.stepSheetId;
 
-      let sheetContent = "No step sheet available.";
+      let sheetContent = "no step sheet available.";
 
-      // B. Fetch Step Sheet Content if ID exists
       if (sheetId) {
         const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
         });
-        // Assuming API returns JSON with a 'content' or 'text' field, or raw text.
-        // Adjusting based on typical API patterns:
         const sheetData = await sheetRes.json();
-        sheetContent = sheetData.content || sheetData.text || JSON.stringify(sheetData); 
+        sheetContent = sheetData.content || sheetData.text || "no content found."; 
       }
 
-      // Update state with full details
       setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: sheetContent }) : null);
 
     } catch (err) {
-      console.error("Error fetching details:", err);
-      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: "Error loading step sheet." }) : null);
+      console.error("error fetching details:", err);
+      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: "error loading step sheet." }) : null);
     }
   };
 
-  // --- PLAYLIST MANAGEMENT ---
   const addToPlaylist = (dance: Dance, listName: string) => {
     if (playlists[listName].some(d => d.id === dance.id)) return;
     setPlaylists(prev => ({ ...prev, [listName]: [...prev[listName], dance] }));
-    // Don't close the dance view, let them keep reading
-    alert(`Added to ${listName}`);
+    alert(`added to ${listName}`);
   };
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
@@ -231,23 +248,23 @@ export default function MasterController() {
 
   const createPlaylist = () => {
     if (!newPlaylistName.trim()) return;
-    if (playlists[newPlaylistName.trim()]) {
-      alert("Playlist already exists");
+    const name = newPlaylistName.trim().toLowerCase();
+    if (playlists[name]) {
+      alert("playlist already exists");
       return;
     }
-    setPlaylists(prev => ({ ...prev, [newPlaylistName.trim().toLowerCase()]: [] }));
+    setPlaylists(prev => ({ ...prev, [name]: [] }));
     setNewPlaylistName('');
   };
 
   const deletePlaylist = (listName: string) => {
-    if (confirm(`Are you sure you want to delete "${listName}"?`)) {
+    if (confirm(`delete "${listName}"?`)) {
       const newPlaylists = { ...playlists };
       delete newPlaylists[listName];
       setPlaylists(newPlaylists);
     }
   };
 
-  // --- AUTH HANDLERS ---
   const handleGoogleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
     catch (err: any) { alert("login failed: " + err.message); }
@@ -261,7 +278,6 @@ export default function MasterController() {
     } catch (err: any) { alert("auth error: " + err.message); }
   };
 
-  // --- VIEW: SINGLE DANCE ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif", overflowX: 'hidden' }}>
@@ -296,11 +312,9 @@ export default function MasterController() {
 
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif", width: '100%', overflowX: 'hidden' }}>
-      
-      {/* --- HEADER --- */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none', boxShadow: isScrolled ? '0 4px 6px rgba(0,0,0,0.05)' : 'none', transition: 'all 0.3s ease', width: '100%' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
-          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="bootstepper logo" style={{ height: 'auto', maxHeight: getLogoSize(), maxWidth: '90%', marginBottom: isScrolled ? '5px' : '20px', display: 'block', marginLeft: 'auto', marginRight: 'auto', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }} />
+          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ height: 'auto', maxHeight: getLogoSize(), maxWidth: '90%', marginBottom: isScrolled ? '5px' : '20px', display: 'block', marginLeft: 'auto', marginRight: 'auto', transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' }} />
           <div style={{ display: 'flex', justifyContent: 'center', borderBottom: `1px solid ${COLORS.PRIMARY}40` }}>
             <button onClick={() => { setCurrentTab('home'); setViewingPlaylist(null); }} style={{ padding: isScrolled ? '5px 20px' : '10px 30px', background: 'none', color: COLORS.PRIMARY, border: 'none', borderBottom: currentTab === 'home' ? `3px solid ${COLORS.SECONDARY}` : 'none', fontWeight: 'bold', cursor: 'pointer', opacity: currentTab === 'home' ? 1 : 0.7, transition: 'all 0.3s ease' }}>home</button>
             <button onClick={() => { setCurrentTab('playlists'); setViewingPlaylist(null); }} style={{ padding: isScrolled ? '5px 20px' : '10px 30px', background: 'none', color: COLORS.PRIMARY, border: 'none', borderBottom: currentTab === 'playlists' ? `3px solid ${COLORS.SECONDARY}` : 'none', fontWeight: 'bold', cursor: 'pointer', opacity: currentTab === 'playlists' ? 1 : 0.7, transition: 'all 0.3s ease' }}>playlists</button>
@@ -310,15 +324,12 @@ export default function MasterController() {
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
-        
-        {/* --- HOME TAB --- */}
         {currentTab === 'home' && (
           <div>
             <form onSubmit={handleSearch} style={{ marginBottom: '30px', display: 'flex', justifyContent: 'center' }}>
               <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', color: COLORS.PRIMARY }} />
               <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', cursor: 'pointer' }}>go</button>
             </form>
-            
             {results.length > 0 && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '10px', borderRadius: '12px', textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 {results.map(d => (
@@ -327,15 +338,7 @@ export default function MasterController() {
                       <div style={{ fontWeight: 'bold', fontSize: '18px', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
                       <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} - {d.songArtist.toLowerCase()}</div>
                     </div>
-                    {/* COLOR CODE CIRCLE */}
-                    <div style={{ 
-                      width: '12px', 
-                      height: '12px', 
-                      borderRadius: '50%', 
-                      backgroundColor: getDifficultyColor(d.difficultyLevel),
-                      flexShrink: 0,
-                      marginLeft: '10px'
-                    }} title={d.difficultyLevel} />
+                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel), flexShrink: 0, marginLeft: '10px' }} />
                   </div>
                 ))}
               </div>
@@ -343,29 +346,20 @@ export default function MasterController() {
           </div>
         )}
 
-        {/* --- PLAYLISTS TAB --- */}
         {currentTab === 'playlists' && (
           <div style={{ textAlign: 'left' }}>
             {!viewingPlaylist ? (
               <div>
-                {/* CREATE PLAYLIST INPUT */}
                 <div style={{ display: 'flex', marginBottom: '20px', gap: '10px' }}>
-                   <input 
-                     value={newPlaylistName} 
-                     onChange={e => setNewPlaylistName(e.target.value)} 
-                     placeholder="new playlist name" 
-                     style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} 
-                   />
+                   <input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="new playlist name" style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} />
                    <button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>+</button>
                 </div>
-
                 {Object.keys(playlists).map(name => (
                   <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', margin: '10px 0', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}>
                       <h2 style={{ fontSize: '1.2rem', fontWeight: 700, color: COLORS.PRIMARY, margin: 0 }}>{name}</h2>
                       <span style={{ color: COLORS.SECONDARY, fontWeight: 'bold' }}>{playlists[name].length} dances</span>
                     </div>
-                    {/* DELETE BUTTON */}
                     <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '20px', fontWeight: 'bold', cursor: 'pointer', padding: '0 10px' }}>×</button>
                   </div>
                 ))}
@@ -390,12 +384,9 @@ export default function MasterController() {
           </div>
         )}
 
-        {/* --- ACCOUNT TAB --- */}
         {currentTab === 'account' && (
           <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', textAlign: 'left' }}>
             <h2 style={{ color: COLORS.PRIMARY, fontSize: '1.5rem', marginBottom: '10px' }}>account & sync</h2>
-            <p style={{ color: COLORS.PRIMARY, marginBottom: '30px' }}>sign in to sync your playlists online.</p>
-            
             {user ? (
               <div style={{ textAlign: 'center' }}>
                 <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>signed in as {user.email}</p>
@@ -403,20 +394,14 @@ export default function MasterController() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                <button onClick={handleGoogleLogin} style={{ width: '100%', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-                  sign in with google
-                </button>
+                <button onClick={handleGoogleLogin} style={{ width: '100%', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>sign in with google</button>
                 <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
                 <form onSubmit={handleEmailAuth} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <input type="email" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} required />
                   <input type="password" placeholder="password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} required />
-                  <button type="submit" style={{ width: '100%', backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
-                    {isLoginView ? 'login with email' : 'create account'}
-                  </button>
+                  <button type="submit" style={{ width: '100%', backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{isLoginView ? 'login' : 'sign up'}</button>
                 </form>
-                <div style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY, fontWeight: 'bold' }} onClick={() => setIsLoginView(!isLoginView)}>
-                  {isLoginView ? 'need an account? sign up' : 'have an account? log in'}
-                </div>
+                <div style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY, fontWeight: 'bold' }} onClick={() => setIsLoginView(!isLoginView)}>{isLoginView ? 'need an account? sign up' : 'have an account? log in'}</div>
               </div>
             )}
           </div>

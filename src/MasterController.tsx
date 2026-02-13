@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import bootstepperLogo from './bootstepper-logo.png';
+import bootstepperMobileLogo from './bootstepper-logo-mobile.png'; // New Mobile Import
 
 // --- DATA DEFINITIONS ---
 export interface Dance {
@@ -43,8 +44,8 @@ const COLORS = {
 
 // --- PERMANENT STORAGE CONFIGURATION ---
 const STORAGE_KEYS = {
-  PERMANENT: 'bootstepper_permanent_storage', // The new forever key
-  LEGACY: 'dance_mgr_v15' // The key we are migrating FROM
+  PERMANENT: 'bootstepper_permanent_storage',
+  LEGACY: 'dance_mgr_v15'
 };
 
 export default function MasterController() {
@@ -58,22 +59,14 @@ export default function MasterController() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-  // --- INTELLIGENT DATA INITIALIZATION ---
+  // --- DATA INITIALIZATION ---
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    // 1. First, try to find the new PERMANENT storage
     const permanentData = localStorage.getItem(STORAGE_KEYS.PERMANENT);
-    if (permanentData) {
-      return JSON.parse(permanentData);
-    }
+    if (permanentData) return JSON.parse(permanentData);
 
-    // 2. If no permanent data, try to rescue data from the LAST version (v15)
     const legacyData = localStorage.getItem(STORAGE_KEYS.LEGACY);
-    if (legacyData) {
-      console.log("Migrating legacy data to permanent storage...");
-      return JSON.parse(legacyData);
-    }
+    if (legacyData) return JSON.parse(legacyData);
 
-    // 3. If neither exists, start fresh
     return {
       "dances i know": [],
       "dances i kinda know": [],
@@ -81,7 +74,6 @@ export default function MasterController() {
     };
   });
 
-  // --- SAVE TO PERMANENT STORAGE ONLY ---
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
   }, [playlists]);
@@ -149,7 +141,7 @@ export default function MasterController() {
   // --- VIEW 1: INDIVIDUAL DANCE PAGE ---
   if (selectedDance) {
     return (
-      <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
+      <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif", overflowX: 'hidden' }}>
         <button onClick={() => setSelectedDance(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '5px', cursor: 'pointer', marginBottom: '30px', fontFamily: "'Roboto', sans-serif" }}>
           ← back
         </button>
@@ -178,11 +170,13 @@ export default function MasterController() {
   // --- DYNAMIC STYLES ---
   const getLogoSize = () => {
     if (isScrolled) return '60px'; 
-    return isMobile ? '200px' : '360px';
+    // Uses different base sizes for mobile vs desktop
+    return isMobile ? '120px' : '360px'; 
   };
 
   return (
-    <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
+    // MAIN CONTAINER: overflowX: 'hidden' prevents side scrolling
+    <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif", width: '100%', overflowX: 'hidden' }}>
       
       {/* HEADER */}
       <div style={{ 
@@ -193,16 +187,19 @@ export default function MasterController() {
         paddingBottom: '10px',
         borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none',
         boxShadow: isScrolled ? '0 4px 6px rgba(0,0,0,0.05)' : 'none',
-        transition: 'all 0.3s ease'
+        transition: 'all 0.3s ease',
+        width: '100%'
       }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           
+          {/* LOGO: Switches source based on device type and ensures fit */}
           <img 
-            src={bootstepperLogo} 
+            src={isMobile ? bootstepperMobileLogo : bootstepperLogo} 
             alt="bootstepper logo" 
             style={{ 
-              height: getLogoSize(),
-              width: 'auto', 
+              height: 'auto', // Allow height to adjust naturally to maintain aspect ratio
+              maxHeight: getLogoSize(), // Cap the height for animation
+              maxWidth: '90%', // Never exceed 90% of screen width (Prevent Cut-off)
               marginBottom: isScrolled ? '5px' : '20px', 
               display: 'block', 
               marginLeft: 'auto', 

@@ -124,7 +124,7 @@ export default function MasterController() {
     const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
     if (localPlaylists) setPlaylists(JSON.parse(localPlaylists));
 
-    const localRecent = localStorage.getItem(STORAGE_SEARCHES);
+    const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
     if (localRecent) setRecentSearches(JSON.parse(localRecent));
   }, []);
 
@@ -365,7 +365,7 @@ export default function MasterController() {
                     {d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}
                   </div>
                 </div>
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel), flexShrink: 0, marginLeft: '10px' }} />
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
               </div>
             ))}
           </div>
@@ -409,7 +409,7 @@ export default function MasterController() {
             {user ? (
               <div style={{ textAlign: 'center' }}><p>signed in: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>sign out</button></div>
             ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <button onClick={handleGoogleLogin} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>sign in with google</button>
                 <form onSubmit={handleEmailAuth} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
                   <input type="email" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />

@@ -47,9 +47,13 @@ export default function MasterController() {
   const [results, setResults] = useState<Dance[]>([]);
   const [selectedDance, setSelectedDance] = useState<Dance | null>(null);
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
+  
+  // --- ANIMATION STATES ---
+  const [isScrolled, setIsScrolled] = useState(false);
+  const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const saved = localStorage.getItem('dance_mgr_v14');
+    const saved = localStorage.getItem('dance_mgr_v15');
     return saved ? JSON.parse(saved) : {
       "dances i know": [],
       "dances i kinda know": [],
@@ -57,9 +61,29 @@ export default function MasterController() {
     };
   });
 
+  // --- LISTENERS ---
   useEffect(() => {
-    localStorage.setItem('dance_mgr_v14', JSON.stringify(playlists));
+    localStorage.setItem('dance_mgr_v15', JSON.stringify(playlists));
   }, [playlists]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      // Shrink header if scrolled more than 50px
+      setIsScrolled(window.scrollY > 50);
+    };
+    
+    const handleResize = () => {
+      // Detect mobile width
+      setIsMobile(window.innerWidth < 768);
+    };
+
+    window.addEventListener('scroll', handleScroll);
+    window.addEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('scroll', handleScroll);
+      window.removeEventListener('resize', handleResize);
+    };
+  }, []);
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -103,6 +127,7 @@ export default function MasterController() {
     }));
   };
 
+  // --- VIEW 1: INDIVIDUAL DANCE PAGE ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
@@ -131,24 +156,49 @@ export default function MasterController() {
     );
   }
 
+  // --- DYNAMIC STYLES ---
+  // Calculates logo size based on scroll state AND device type
+  const getLogoSize = () => {
+    if (isScrolled) return '60px'; // Collapsed size for everyone
+    return isMobile ? '200px' : '360px'; // Initial size: Mobile vs Desktop
+  };
+
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
-      {/* HEADER: Sticky positioning as requested */}
-      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px' }}>
-        <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
+      
+      {/* HEADER: Sticky with transition effects */}
+      <div style={{ 
+        position: 'sticky', 
+        top: 0, 
+        backgroundColor: COLORS.BACKGROUND, 
+        zIndex: 10, 
+        paddingBottom: '10px',
+        borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none',
+        boxShadow: isScrolled ? '0 4px 6px rgba(0,0,0,0.05)' : 'none',
+        transition: 'all 0.3s ease' // Smooth animation
+      }}>
+        <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           
-          {/* LOGO: Doubled size to 360px */}
+          {/* LOGO: Dynamic sizing */}
           <img 
             src={bootstepperLogo} 
             alt="bootstepper logo" 
-            style={{ maxHeight: '360px', width: 'auto', marginBottom: '20px', display: 'block', marginLeft: 'auto', marginRight: 'auto' }} 
+            style={{ 
+              height: getLogoSize(), // Applies the calculated size
+              width: 'auto', 
+              marginBottom: isScrolled ? '5px' : '20px', 
+              display: 'block', 
+              marginLeft: 'auto', 
+              marginRight: 'auto',
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // "Physics" based smoothing
+            }} 
           />
 
           <div style={{ display: 'flex', justifyContent: 'center', borderBottom: `1px solid ${COLORS.PRIMARY}40` }}>
             <button
               onClick={() => { setCurrentTab('home'); setViewingPlaylist(null); }}
               style={{
-                padding: '10px 30px',
+                padding: isScrolled ? '5px 20px' : '10px 30px', // Buttons also shrink slightly
                 background: 'none',
                 color: COLORS.PRIMARY,
                 border: 'none',
@@ -156,7 +206,8 @@ export default function MasterController() {
                 fontWeight: 'bold',
                 cursor: 'pointer',
                 fontFamily: "'Roboto', sans-serif",
-                opacity: currentTab === 'home' ? 1 : 0.7
+                opacity: currentTab === 'home' ? 1 : 0.7,
+                transition: 'all 0.3s ease'
               }}
             >
               home
@@ -164,7 +215,7 @@ export default function MasterController() {
             <button
               onClick={() => { setCurrentTab('playlists'); setViewingPlaylist(null); }}
               style={{
-                padding: '10px 30px',
+                padding: isScrolled ? '5px 20px' : '10px 30px',
                 background: 'none',
                 color: COLORS.PRIMARY,
                 border: 'none',
@@ -172,7 +223,8 @@ export default function MasterController() {
                 fontWeight: 'bold',
                 cursor: 'pointer',
                 fontFamily: "'Roboto', sans-serif",
-                opacity: currentTab === 'playlists' ? 1 : 0.7
+                opacity: currentTab === 'playlists' ? 1 : 0.7,
+                transition: 'all 0.3s ease'
               }}
             >
               playlists

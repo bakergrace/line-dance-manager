@@ -34,7 +34,7 @@ export interface Dance {
   songArtist: string;
   stepSheetContent?: string[]; 
   originalStepSheetUrl?: string;
-  stepSheetId?: string; // FIX: Added this missing property
+  stepSheetId?: string;
   wallCount: number;
 }
 
@@ -49,6 +49,7 @@ interface ApiRawItem {
   stepSheetId?: string;
   stepsheet?: string;
   originalStepSheetUrl?: string; 
+  viewCount?: number; 
   danceSongs?: Array<{
     song?: { title?: string; artist?: string; };
   }>;
@@ -78,22 +79,24 @@ const COLORS = {
   PRIMARY: '#36649A',
   SECONDARY: '#D99AB1',
   WHITE: '#FFFFFF',
-  SUCCESS: '#4CAF50', 
-  WARNING: '#FFC107', 
-  DANGER: '#F44336',  
-  NEUTRAL: '#9E9E9E'  
+  NEUTRAL: '#BDBDBD'
 };
 
 const STORAGE_KEYS = {
   PERMANENT: 'bootstepper_permanent_storage'
 };
 
+// --- UPDATED DIFFICULTY COLORS ---
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
-  if (l.includes('beginner') || l.includes('absolute')) return COLORS.SUCCESS;
-  if (l.includes('improver')) return COLORS.WARNING;
-  if (l.includes('intermediate') || l.includes('advanced')) return COLORS.DANGER;
-  return COLORS.NEUTRAL;
+  
+  if (l.includes('absolute')) return '#29B6F6';     // Light Blue
+  if (l.includes('beginner')) return '#66BB6A';     // Green
+  if (l.includes('improver')) return '#FFA726';     // Orange/Amber
+  if (l.includes('intermediate')) return '#EF5350'; // Red
+  if (l.includes('advanced')) return '#AB47BC';     // Purple
+  
+  return COLORS.NEUTRAL; // Grey for unknown
 };
 
 export default function MasterController() {
@@ -166,12 +169,12 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- 1. SEARCH: RELEVANCE SORTING ---
+  // --- SEARCH: VIEW COUNT SORTING ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query) return;
     try {
-      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=50`, {
+      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=50&sortBy=viewCount`, {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const data = await res.json();
@@ -184,19 +187,18 @@ export default function MasterController() {
         counts: item.counts ?? item.count ?? 0,
         wallCount: Number(item.walls ?? item.wallCount ?? 0),
         originalStepSheetUrl: item.originalStepSheetUrl,
-        stepSheetId: item.stepSheetId, // Now mapped correctly without error
+        stepSheetId: item.stepSheetId,
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
     } catch (err) { console.error(err); }
   };
 
-  // --- 2. STEP SHEET: FULL CONTENT & FALLBACK ---
+  // --- STEP SHEET LOGIC ---
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
 
     try {
-      // Fetch full details
       const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
@@ -207,7 +209,6 @@ export default function MasterController() {
 
       let parsedLines: string[] = [];
 
-      // Try fetching via sheet ID first
       if (sheetId) {
         const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
@@ -222,7 +223,6 @@ export default function MasterController() {
           }
         }
       } 
-      // Fallback: If no sheetId, try fetching using the Dance ID directly (sometimes APIs use the same ID)
       else if (basicDance.id) {
          const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${basicDance.id}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
@@ -235,7 +235,6 @@ export default function MasterController() {
         }
       }
 
-      // If still no content, set placeholder
       if (parsedLines.length === 0) {
         parsedLines = ["Preview not available via API."];
       }

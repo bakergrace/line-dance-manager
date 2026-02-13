@@ -79,14 +79,17 @@ const COLORS = {
   PRIMARY: '#36649A',
   SECONDARY: '#D99AB1',
   WHITE: '#FFFFFF',
-  NEUTRAL: '#BDBDBD'
+  SUCCESS: '#4CAF50', 
+  WARNING: '#FFC107', 
+  DANGER: '#F44336',  
+  NEUTRAL: '#9E9E9E'  
 };
 
 const STORAGE_KEYS = {
   PERMANENT: 'bootstepper_permanent_storage'
 };
 
-// --- UPDATED DIFFICULTY COLORS ---
+// --- DIFFICULTY COLORS (5-Color Spectrum) ---
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
   
@@ -96,7 +99,7 @@ const getDifficultyColor = (level: string) => {
   if (l.includes('intermediate')) return '#EF5350'; // Red
   if (l.includes('advanced')) return '#AB47BC';     // Purple
   
-  return COLORS.NEUTRAL; // Grey for unknown
+  return COLORS.NEUTRAL; 
 };
 
 export default function MasterController() {
@@ -169,12 +172,13 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- SEARCH: VIEW COUNT SORTING ---
+  // --- SEARCH: DANCE DATABASE ONLY ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query) return;
     try {
-      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=50&sortBy=viewCount`, {
+      // STRICTLY using the /dances/search endpoint
+      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=50`, {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const data = await res.json();
@@ -188,17 +192,19 @@ export default function MasterController() {
         wallCount: Number(item.walls ?? item.wallCount ?? 0),
         originalStepSheetUrl: item.originalStepSheetUrl,
         stepSheetId: item.stepSheetId,
+        // Extracting song info from the dance object
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
     } catch (err) { console.error(err); }
   };
 
-  // --- STEP SHEET LOGIC ---
+  // --- SELECT DANCE: FETCH FULL PROFILE ---
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
 
     try {
+      // 1. Fetch Full Profile via /dances/getById
       const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
@@ -209,6 +215,7 @@ export default function MasterController() {
 
       let parsedLines: string[] = [];
 
+      // 2. Fetch Step Sheet via /dances/getStepSheet
       if (sheetId) {
         const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
@@ -223,6 +230,7 @@ export default function MasterController() {
           }
         }
       } 
+      // Fallback: Try fetching by Dance ID if StepSheet ID is missing
       else if (basicDance.id) {
          const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${basicDance.id}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
@@ -242,7 +250,10 @@ export default function MasterController() {
       setSelectedDance(prev => prev ? ({ 
         ...prev, 
         stepSheetContent: parsedLines,
-        originalStepSheetUrl: officialUrl 
+        originalStepSheetUrl: officialUrl,
+        // Ensure song info is preserved/updated from details if needed
+        songTitle: details.danceSongs?.[0]?.song?.title || prev.songTitle,
+        songArtist: details.danceSongs?.[0]?.song?.artist || prev.songArtist
       }) : null);
 
     } catch (err) {

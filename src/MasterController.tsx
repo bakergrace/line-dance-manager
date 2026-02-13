@@ -32,8 +32,7 @@ export interface Dance {
   counts: number;
   songTitle: string;
   songArtist: string;
-  stepSheetId?: string; 
-  stepSheetContent?: string; 
+  stepSheetContent?: string[]; 
   wallCount: number;
 }
 
@@ -45,8 +44,6 @@ interface ApiRawItem {
   count?: number;
   walls?: number;
   wallCount?: number;
-  stepSheetId?: string;
-  stepsheet?: string;
   danceSongs?: Array<{
     song?: { title?: string; artist?: string; };
   }>;
@@ -87,7 +84,7 @@ const STORAGE_KEYS = {
 };
 
 const getDifficultyColor = (level: string) => {
-  const l = level.toLowerCase();
+  const l = (level || '').toLowerCase();
   if (l.includes('beginner') || l.includes('absolute')) return COLORS.SUCCESS;
   if (l.includes('improver')) return COLORS.WARNING;
   if (l.includes('intermediate') || l.includes('advanced')) return COLORS.DANGER;
@@ -107,15 +104,13 @@ export default function MasterController() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
-
-  // --- CRITICAL FIX: SAFETY LOCK ---
-  // This state prevents the app from saving empty data while it's still starting up.
+  
+  // CRITICAL SAFETY LOCK: Prevents saving empty data until initial sync is complete
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
 
-  // --- CRITICAL FIX: LAZY INITIALIZATION ---
-  // We initialize state directly from localStorage so it NEVER starts as empty.
+  // LAZY INITIALIZATION: Starts with local storage to avoid "empty start" overwrites
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
     try {
       const local = localStorage.getItem(STORAGE_KEYS.PERMANENT);
@@ -125,51 +120,32 @@ export default function MasterController() {
         "dances i want to know": []
       };
     } catch (e) {
-      return {
-        "dances i know": [],
-        "dances i kinda know": [],
-        "dances i want to know": []
-      };
+      return { "dances i know": [], "dances i kinda know": [], "dances i want to know": [] };
     }
   });
 
-  // --- AUTH & CLOUD SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      
       if (currentUser) {
-        // LOGGED IN: Fetch cloud data
         try {
           const docRef = doc(db, "users", currentUser.uid);
           const docSnap = await getDoc(docRef);
-          
           if (docSnap.exists()) {
-            // Cloud has data -> Load it and overwrite local (Sync Source of Truth)
-            const cloudData = docSnap.data() as { [key: string]: Dance[] };
-            setPlaylists(cloudData);
+            setPlaylists(docSnap.data() as { [key: string]: Dance[] });
           } else {
-            // New cloud user -> Save what we currently have in local to the cloud
             await setDoc(docRef, playlists);
           }
-        } catch (error) {
-          console.error("Sync Error:", error);
-        }
+        } catch (error) { console.error("Sync Error:", error); }
       } 
-      
-      // Mark initialization as complete. Now it is safe to save changes.
       setIsDataLoaded(true);
     });
     return () => unsubscribe();
   }, []);
 
-  // --- DATA SAVER ---
   useEffect(() => {
-    // 1. Always save to LocalStorage (Immediate Backup)
     localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-
-    // 2. SAFETY CHECK: Only save to Cloud if we have finished loading the initial data.
-    // This prevents the "empty init" from overwriting the database.
+    // SAFETY CHECK: isDataLoaded must be true to push to Firestore
     if (user && isDataLoaded) {
       setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
     }
@@ -201,7 +177,6 @@ export default function MasterController() {
         difficultyLevel: item.difficultyLevel || "unknown",
         counts: item.counts ?? item.count ?? 0,
         wallCount: Number(item.walls ?? item.wallCount ?? 0),
-        stepSheetId: item.stepSheetId, 
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
@@ -212,34 +187,33 @@ export default function MasterController() {
     setSelectedDance(basicDance);
 
     try {
-      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
-         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+      const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${basicDance.id}`, {
+        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
-      const details = await detailsRes.json();
-      const sheetId = details.stepSheetId || basicDance.stepSheetId;
 
-      let sheetContent = "no step sheet available.";
-
-      if (sheetId) {
-        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
-          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-        });
+      if (sheetRes.ok) {
         const sheetData = await sheetRes.json();
-        sheetContent = sheetData.content || sheetData.text || "no content found."; 
+        let parsedLines: string[] = [];
+        if (Array.isArray(sheetData.content)) {
+          parsedLines = sheetData.content.map((row: any) => row.text || "");
+        } else if (typeof sheetData.content === 'string') {
+          parsedLines = [sheetData.content];
+        } else {
+          parsedLines = ["no text content found."];
+        }
+        setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: parsedLines }) : null);
+      } else {
+        setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: ["step sheet not found for this dance."] }) : null);
       }
-
-      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: sheetContent }) : null);
-
     } catch (err) {
       console.error("error fetching details:", err);
-      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: "error loading step sheet." }) : null);
+      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: ["error loading step sheet."] }) : null);
     }
   };
 
   const addToPlaylist = (dance: Dance, listName: string) => {
     if (playlists[listName].some(d => d.id === dance.id)) return;
     setPlaylists(prev => ({ ...prev, [listName]: [...prev[listName], dance] }));
-    alert(`added to ${listName}`);
   };
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
@@ -299,8 +273,14 @@ export default function MasterController() {
 
           <div style={{ marginTop: '40px', borderTop: `1px solid ${COLORS.PRIMARY}20`, paddingTop: '20px' }}>
             <h3 style={{ fontSize: '1.5rem', marginBottom: '15px', color: COLORS.PRIMARY }}>step sheet</h3>
-            <div style={{ backgroundColor: '#F9F9F9', padding: '20px', borderRadius: '8px', whiteSpace: 'pre-wrap', fontFamily: 'monospace', fontSize: '14px', lineHeight: '1.5', color: '#333' }}>
-              {selectedDance.stepSheetContent ? selectedDance.stepSheetContent : "loading step sheet..."}
+            <div style={{ backgroundColor: '#F9F9F9', padding: '20px', borderRadius: '8px', fontSize: '14px', lineHeight: '1.6', color: '#333' }}>
+              {selectedDance.stepSheetContent ? (
+                selectedDance.stepSheetContent.map((line, index) => (
+                  <div key={index} style={{ marginBottom: '4px' }}>{line}</div>
+                ))
+              ) : (
+                <div style={{ fontStyle: 'italic', opacity: 0.6 }}>loading step sheet...</div>
+              )}
             </div>
           </div>
         </div>

@@ -44,6 +44,9 @@ interface ApiRawItem {
   count?: number;
   walls?: number;
   wallCount?: number;
+  stepSheetId?: string;
+  stepsheet?: string;
+  videoCount?: number; // Added for Popularity Sorting
   danceSongs?: Array<{
     song?: { title?: string; artist?: string; };
   }>;
@@ -105,12 +108,12 @@ export default function MasterController() {
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
   
-  // CRITICAL SAFETY LOCK: Prevents saving empty data until initial sync is complete
+  // SAFETY LOCK
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
   const [newPlaylistName, setNewPlaylistName] = useState('');
 
-  // LAZY INITIALIZATION: Starts with local storage to avoid "empty start" overwrites
+  // LAZY INITIALIZATION
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
     try {
       const local = localStorage.getItem(STORAGE_KEYS.PERMANENT);
@@ -145,7 +148,6 @@ export default function MasterController() {
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-    // SAFETY CHECK: isDataLoaded must be true to push to Firestore
     if (user && isDataLoaded) {
       setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
     }
@@ -170,7 +172,14 @@ export default function MasterController() {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const data = await res.json();
+      
+      // 1. GET ITEMS
       const items = (data.items || []) as ApiRawItem[];
+
+      // 2. SORT BY POPULARITY (videoCount DESCENDING)
+      items.sort((a, b) => (b.videoCount || 0) - (a.videoCount || 0));
+
+      // 3. MAP TO VIEW
       setResults(items.map(item => ({
         id: item.id,
         title: item.title,

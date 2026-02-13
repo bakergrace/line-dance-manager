@@ -30,29 +30,24 @@ export default function MasterController() {
     localStorage.setItem('dance_mgr_v6', JSON.stringify(playlists));
   }, [playlists]);
 
-  const handleSearch = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!query) return;
-    try {
-      const response = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=10`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-      });
-      const data = await response.json();
-      const mapped = (data.items || []).map((item: any) => ({
-        id: item.id,
-        title: item.title,
-        difficultyLevel: item.difficultyLevel || "Unknown",
-        counts: item.counts || 0,
-        wallCount: item.wallCount || 0, //
-        stepSheetUrl: item.stepSheetUrl || "", //
-        songTitle: item.danceSongs?.[0]?.song?.title || "Unknown Song",
-        songArtist: item.danceSongs?.[0]?.song?.artist || "Unknown Artist"
-      }));
-      setResults(mapped);
-    } catch (err) {
-      console.error("Search error", err);
-    }
+  const data = await response.json();
+console.log("RAW DATA FROM BOOTSTEPPER:", data.items); // This is the 'X-Ray'
+
+const mapped = (data.items || []).map((item: any) => {
+  // Methodological check: Look for walls in every possible hiding spot
+  const walls = item.walls ?? item.wallCount ?? item.details?.walls ?? item.number_of_walls ?? 0;
+  
+  return {
+    id: item.id,
+    title: item.title,
+    difficultyLevel: item.difficultyLevel || "Unknown",
+    counts: item.counts || item.count || 0,
+    wallCount: parseInt(walls.toString()) || 0, // Force it to be a number
+    stepSheetUrl: item.stepSheetUrl || item.stepsheet || "",
+    songTitle: item.danceSongs?.[0]?.song?.title || "Unknown Song",
+    songArtist: item.danceSongs?.[0]?.song?.artist || "Unknown Artist"
   };
+});
 
   const addToPlaylist = (dance: Dance, listName: string) => {
     if (playlists[listName].some(d => d.id === dance.id)) return;

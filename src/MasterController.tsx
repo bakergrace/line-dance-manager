@@ -41,6 +41,12 @@ const COLORS = {
   WHITE: '#FFFFFF',
 };
 
+// --- PERMANENT STORAGE CONFIGURATION ---
+const STORAGE_KEYS = {
+  PERMANENT: 'bootstepper_permanent_storage', // The new forever key
+  LEGACY: 'dance_mgr_v15' // The key we are migrating FROM
+};
+
 export default function MasterController() {
   const [currentTab, setCurrentTab] = useState<'home' | 'playlists'>('home');
   const [query, setQuery] = useState('');
@@ -52,28 +58,41 @@ export default function MasterController() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
+  // --- INTELLIGENT DATA INITIALIZATION ---
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const saved = localStorage.getItem('dance_mgr_v15');
-    return saved ? JSON.parse(saved) : {
+    // 1. First, try to find the new PERMANENT storage
+    const permanentData = localStorage.getItem(STORAGE_KEYS.PERMANENT);
+    if (permanentData) {
+      return JSON.parse(permanentData);
+    }
+
+    // 2. If no permanent data, try to rescue data from the LAST version (v15)
+    const legacyData = localStorage.getItem(STORAGE_KEYS.LEGACY);
+    if (legacyData) {
+      console.log("Migrating legacy data to permanent storage...");
+      return JSON.parse(legacyData);
+    }
+
+    // 3. If neither exists, start fresh
+    return {
       "dances i know": [],
       "dances i kinda know": [],
       "dances i want to know": []
     };
   });
 
-  // --- LISTENERS ---
+  // --- SAVE TO PERMANENT STORAGE ONLY ---
   useEffect(() => {
-    localStorage.setItem('dance_mgr_v15', JSON.stringify(playlists));
+    localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
   }, [playlists]);
 
+  // --- LISTENERS ---
   useEffect(() => {
     const handleScroll = () => {
-      // Shrink header if scrolled more than 50px
       setIsScrolled(window.scrollY > 50);
     };
     
     const handleResize = () => {
-      // Detect mobile width
       setIsMobile(window.innerWidth < 768);
     };
 
@@ -157,16 +176,15 @@ export default function MasterController() {
   }
 
   // --- DYNAMIC STYLES ---
-  // Calculates logo size based on scroll state AND device type
   const getLogoSize = () => {
-    if (isScrolled) return '60px'; // Collapsed size for everyone
-    return isMobile ? '200px' : '360px'; // Initial size: Mobile vs Desktop
+    if (isScrolled) return '60px'; 
+    return isMobile ? '200px' : '360px';
   };
 
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
       
-      {/* HEADER: Sticky with transition effects */}
+      {/* HEADER */}
       <div style={{ 
         position: 'sticky', 
         top: 0, 
@@ -175,22 +193,21 @@ export default function MasterController() {
         paddingBottom: '10px',
         borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none',
         boxShadow: isScrolled ? '0 4px 6px rgba(0,0,0,0.05)' : 'none',
-        transition: 'all 0.3s ease' // Smooth animation
+        transition: 'all 0.3s ease'
       }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           
-          {/* LOGO: Dynamic sizing */}
           <img 
             src={bootstepperLogo} 
             alt="bootstepper logo" 
             style={{ 
-              height: getLogoSize(), // Applies the calculated size
+              height: getLogoSize(),
               width: 'auto', 
               marginBottom: isScrolled ? '5px' : '20px', 
               display: 'block', 
               marginLeft: 'auto', 
               marginRight: 'auto',
-              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)' // "Physics" based smoothing
+              transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)'
             }} 
           />
 
@@ -198,7 +215,7 @@ export default function MasterController() {
             <button
               onClick={() => { setCurrentTab('home'); setViewingPlaylist(null); }}
               style={{
-                padding: isScrolled ? '5px 20px' : '10px 30px', // Buttons also shrink slightly
+                padding: isScrolled ? '5px 20px' : '10px 30px',
                 background: 'none',
                 color: COLORS.PRIMARY,
                 border: 'none',

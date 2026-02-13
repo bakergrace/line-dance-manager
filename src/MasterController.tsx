@@ -13,7 +13,8 @@ export interface Dance {
 }
 
 // --- THE LOGIC ENGINE ---
-const API_KEY = "AT6C4B34QN8J6H2RHN8SGKN"; 
+// This tells the app to look for the key in Vercel's settings instead of here!
+const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string; 
 const BASE_URL = 'https://cors-anywhere.herokuapp.com/https://api.bootstepper.com';
 
 export default function MasterController() {

@@ -119,15 +119,16 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // Load Initial Data
+  // --- INITIAL DATA LOAD ---
   useEffect(() => {
     const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
     if (localPlaylists) setPlaylists(JSON.parse(localPlaylists));
 
-    const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
+    const localRecent = localStorage.getItem(STORAGE_SEARCHES);
     if (localRecent) setRecentSearches(JSON.parse(localRecent));
   }, []);
 
+  // --- AUTH & SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -147,13 +148,17 @@ export default function MasterController() {
     return () => unsubscribe();
   }, []);
 
+  // --- CLOUD SAVE ---
   useEffect(() => {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-      if (user) setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
+      if (user) {
+        setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
+      }
     }
   }, [playlists, user, isDataLoaded]);
 
+  // --- UI LISTENERS ---
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -165,6 +170,7 @@ export default function MasterController() {
     };
   }, []);
 
+  // --- SEARCH LOGIC ---
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
     
@@ -192,6 +198,7 @@ export default function MasterController() {
     } catch (err) { console.error(err); }
   };
 
+  // --- DANCE SELECTION ---
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
     try {
@@ -220,8 +227,13 @@ export default function MasterController() {
     } catch (err) { console.error(err); }
   };
 
+  // --- PLAYLIST CORE ---
   const addToPlaylist = (dance: Dance, listName: string) => {
-    if (playlists[listName].some(d => d.id === dance.id)) return;
+    if (!playlists[listName]) return;
+    const exists = playlists[listName].some(d => d.id === dance.id);
+    if (exists) return;
+
+    // Use functional update to ensure we don't break the current view reference
     setPlaylists(prev => ({
       ...prev,
       [listName]: [...prev[listName], dance]
@@ -229,7 +241,10 @@ export default function MasterController() {
   };
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
-    setPlaylists(prev => ({ ...prev, [listName]: prev[listName].filter(d => d.id !== danceId) }));
+    setPlaylists(prev => ({
+      ...prev,
+      [listName]: prev[listName].filter(d => d.id !== danceId)
+    }));
   };
 
   const createPlaylist = () => {
@@ -242,12 +257,15 @@ export default function MasterController() {
 
   const deletePlaylist = (listName: string) => {
     if (confirm(`delete "${listName}"?`)) {
-      const newP = { ...playlists };
-      delete newP[listName];
-      setPlaylists(newP);
+      setPlaylists(prev => {
+        const newP = { ...prev };
+        delete newP[listName];
+        return newP;
+      });
     }
   };
 
+  // --- AUTH HANDLERS ---
   const handleGoogleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
     catch (err: any) { alert("login failed: " + err.message); }
@@ -261,6 +279,7 @@ export default function MasterController() {
     } catch (err: any) { alert("auth error: " + err.message); }
   };
 
+  // --- RENDER DANCE PROFILE (LOCKED VIEW) ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
@@ -307,6 +326,7 @@ export default function MasterController() {
 
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
+  // --- RENDER MAIN TABS ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>

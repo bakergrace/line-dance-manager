@@ -119,16 +119,18 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // --- INITIAL DATA LOAD ---
+  // Load Initial Data
   useEffect(() => {
-    const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
-    if (localPlaylists) setPlaylists(JSON.parse(localPlaylists));
+    try {
+      const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
+      if (localPlaylists) setPlaylists(JSON.parse(localPlaylists));
 
-    const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
-    if (localRecent) setRecentSearches(JSON.parse(localRecent));
+      const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
+      if (localRecent) setRecentSearches(JSON.parse(localRecent));
+    } catch (e) { console.error("Local Load Error", e); }
   }, []);
 
-  // --- AUTH & SYNC ---
+  // Auth & Sync Logic
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -148,7 +150,7 @@ export default function MasterController() {
     return () => unsubscribe();
   }, []);
 
-  // --- CLOUD SAVE ---
+  // Cloud Save
   useEffect(() => {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
@@ -158,7 +160,7 @@ export default function MasterController() {
     }
   }, [playlists, user, isDataLoaded]);
 
-  // --- UI LISTENERS ---
+  // UI Listeners
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -170,10 +172,8 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- SEARCH LOGIC ---
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
-    
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
@@ -198,7 +198,6 @@ export default function MasterController() {
     } catch (err) { console.error(err); }
   };
 
-  // --- DANCE SELECTION ---
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
     try {
@@ -206,7 +205,6 @@ export default function MasterController() {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const details = await detailsRes.json();
-      const officialUrl = details.originalStepSheetUrl || basicDance.originalStepSheetUrl;
       const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
 
       const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
@@ -219,7 +217,7 @@ export default function MasterController() {
         setSelectedDance(prev => prev ? ({ 
           ...prev, 
           stepSheetContent: content,
-          originalStepSheetUrl: officialUrl,
+          originalStepSheetUrl: details.originalStepSheetUrl || basicDance.originalStepSheetUrl,
           songTitle: details.danceSongs?.[0]?.song?.title || prev.songTitle,
           songArtist: details.danceSongs?.[0]?.song?.artist || prev.songArtist
         }) : null);
@@ -227,24 +225,25 @@ export default function MasterController() {
     } catch (err) { console.error(err); }
   };
 
-  // --- PLAYLIST CORE ---
+  // SAFETY-FIRST ADD TO PLAYLIST
   const addToPlaylist = (dance: Dance, listName: string) => {
-    if (!playlists[listName]) return;
+    if (!dance || !playlists[listName]) return;
     const exists = playlists[listName].some(d => d.id === dance.id);
     if (exists) return;
 
-    // Use functional update to ensure we don't break the current view reference
-    setPlaylists(prev => ({
-      ...prev,
-      [listName]: [...prev[listName], dance]
-    }));
+    setPlaylists(prev => {
+      const updated = { ...prev };
+      updated[listName] = [...updated[listName], dance];
+      return updated;
+    });
   };
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
-    setPlaylists(prev => ({
-      ...prev,
-      [listName]: prev[listName].filter(d => d.id !== danceId)
-    }));
+    setPlaylists(prev => {
+      const updated = { ...prev };
+      updated[listName] = updated[listName].filter(d => d.id !== danceId);
+      return updated;
+    });
   };
 
   const createPlaylist = () => {
@@ -258,14 +257,13 @@ export default function MasterController() {
   const deletePlaylist = (listName: string) => {
     if (confirm(`delete "${listName}"?`)) {
       setPlaylists(prev => {
-        const newP = { ...prev };
-        delete newP[listName];
-        return newP;
+        const updated = { ...prev };
+        delete updated[listName];
+        return updated;
       });
     }
   };
 
-  // --- AUTH HANDLERS ---
   const handleGoogleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
     catch (err: any) { alert("login failed: " + err.message); }
@@ -279,147 +277,145 @@ export default function MasterController() {
     } catch (err: any) { alert("auth error: " + err.message); }
   };
 
-  // --- RENDER DANCE PROFILE (LOCKED VIEW) ---
-  if (selectedDance) {
-    return (
-      <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
-        <button onClick={() => setSelectedDance(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '5px', cursor: 'pointer', marginBottom: '30px' }}>← back</button>
-        <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-          <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700 }}>{selectedDance.title.toLowerCase()}</h1>
-          <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '20px' }}>{selectedDance.difficultyLevel.toLowerCase()} • {selectedDance.counts} counts • {selectedDance.wallCount} walls</div>
-          <p><strong>song:</strong> {selectedDance.songTitle.toLowerCase()}</p>
-          <p><strong>artist:</strong> {selectedDance.songArtist.toLowerCase()}</p>
-          
-          <div style={{ marginTop: '30px' }}>
-            <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>add to playlist:</h3>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
-              {Object.keys(playlists).map(name => (
-                <button key={name} onClick={() => addToPlaylist(selectedDance, name)} style={{ flex: '1 1 100px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{name}</button>
-              ))}
-            </div>
-          </div>
-
-          <div style={{ marginTop: '40px', borderTop: `1px solid ${COLORS.PRIMARY}20`, paddingTop: '20px' }}>
-            <h3 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>step sheet</h3>
-            <div style={{ backgroundColor: '#F9F9F9', padding: '15px', borderRadius: '8px', fontSize: '14px', color: '#333' }}>
-              {selectedDance.stepSheetContent && selectedDance.stepSheetContent.length > 0 ? (
-                selectedDance.stepSheetContent.map((row, idx) => (
-                  <div key={idx} style={{ marginBottom: '6px' }}>
-                    {(row.heading || row.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '10px' }}>{row.heading || row.title}</div>}
-                    {(row.text || row.description || row.instruction) && (
-                      <div style={{ display: 'flex' }}>
-                        {row.counts && <span style={{ fontWeight: 'bold', width: '35px', flexShrink: 0 }}>{row.counts}</span>}
-                        <span>{row.text || row.description || row.instruction}</span>
-                      </div>
-                    )}
-                    {row.note && <div style={{ fontStyle: 'italic', fontSize: '0.9em', opacity: 0.8 }}>Note: {row.note}</div>}
-                  </div>
-                ))
-              ) : <div style={{ opacity: 0.5 }}>loading full steps...</div>}
-            </div>
-            {selectedDance.originalStepSheetUrl && <div style={{ marginTop: '20px', textAlign: 'center' }}><a href={selectedDance.originalStepSheetUrl} target="_blank" rel="noreferrer" style={{ color: COLORS.PRIMARY, fontWeight: 'bold' }}>original sheet ↗</a></div>}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
+  // --- LOGO HELPER ---
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
-  // --- RENDER MAIN TABS ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
+      {/* HEADER SECTION */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: '0.3s' }} />
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
             {['home', 'playlists', 'account'].map(t => (
-              <button key={t} onClick={() => { setCurrentTab(t as any); setViewingPlaylist(null); }} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentTab === t ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>{t}</button>
+              <button key={t} onClick={() => { setCurrentTab(t as any); setViewingPlaylist(null); setSelectedDance(null); }} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentTab === t ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>{t}</button>
             ))}
           </div>
         </div>
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-        {currentTab === 'home' && (
-          <div>
-            <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} />
-              <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>go</button>
-            </form>
-
-            {recentSearches.length > 0 && !results.length && (
-              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>recent:</span>
-                {recentSearches.map(s => (
-                  <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>
-                ))}
-              </div>
-            )}
-
-            {results.map(d => (
-              <div key={d.id} onClick={() => handleSelectDance(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div>
-                  <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
-                  <div style={{ fontSize: '13px', color: COLORS.SECONDARY, fontWeight: 'bold' }}>
-                    {d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}
-                  </div>
-                </div>
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
-              </div>
-            ))}
-          </div>
-        )}
-
-        {currentTab === 'playlists' && (
-          <div>
-            {!viewingPlaylist ? (
-              <>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-                  <input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="new playlist..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} />
-                  <button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px' }}>+</button>
-                </div>
+        {/* --- DANCE PROFILE VIEW (CRASH PROTECTED) --- */}
+        {selectedDance ? (
+          <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+            <button onClick={() => setSelectedDance(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '5px', cursor: 'pointer', marginBottom: '20px' }}>← back</button>
+            <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700 }}>{selectedDance?.title?.toLowerCase()}</h1>
+            <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '20px' }}>{selectedDance?.difficultyLevel?.toLowerCase()} • {selectedDance?.counts} counts • {selectedDance?.wallCount} walls</div>
+            <p><strong>song:</strong> {selectedDance?.songTitle?.toLowerCase()}</p>
+            <p><strong>artist:</strong> {selectedDance?.songArtist?.toLowerCase()}</p>
+            
+            <div style={{ marginTop: '30px' }}>
+              <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>add to playlist:</h3>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 {Object.keys(playlists).map(name => (
-                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
-                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '20px' }}>×</button>
-                  </div>
-                ))}
-              </>
-            ) : (
-              <div>
-                <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px' }}>← back</button>
-                <h2 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>{viewingPlaylist}</h2>
-                {playlists[viewingPlaylist].map(d => (
-                  <div key={d.id} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div onClick={() => handleSelectDance(d)} style={{ cursor: 'pointer' }}>
-                      <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
-                      <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
-                    </div>
-                    <button onClick={() => removeFromPlaylist(d.id, viewingPlaylist)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px' }}>remove</button>
-                  </div>
+                  <button key={name} onClick={() => addToPlaylist(selectedDance, name)} style={{ flex: '1 1 100px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{name}</button>
                 ))}
               </div>
-            )}
-          </div>
-        )}
+            </div>
 
-        {currentTab === 'account' && (
-          <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            {user ? (
-              <div style={{ textAlign: 'center' }}><p>signed in: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>sign out</button></div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                <button onClick={handleGoogleLogin} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>sign in with google</button>
-                <form onSubmit={handleEmailAuth} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-                  <input type="email" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
-                  <input type="password" placeholder="password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
-                  <button type="submit" style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'login' : 'sign up'}</button>
+            <div style={{ marginTop: '40px', borderTop: `1px solid ${COLORS.PRIMARY}20`, paddingTop: '20px' }}>
+              <h3 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>step sheet</h3>
+              <div style={{ backgroundColor: '#F9F9F9', padding: '15px', borderRadius: '8px', fontSize: '14px', color: '#333' }}>
+                {selectedDance?.stepSheetContent && selectedDance.stepSheetContent.length > 0 ? (
+                  selectedDance.stepSheetContent.map((row, idx) => (
+                    <div key={idx} style={{ marginBottom: '6px' }}>
+                      {(row?.heading || row?.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '10px' }}>{row.heading || row.title}</div>}
+                      {(row?.text || row?.description || row?.instruction) && (
+                        <div style={{ display: 'flex' }}>
+                          {row?.counts && <span style={{ fontWeight: 'bold', width: '35px', flexShrink: 0 }}>{row.counts}</span>}
+                          <span>{row.text || row.description || row.instruction}</span>
+                        </div>
+                      )}
+                      {row?.note && <div style={{ fontStyle: 'italic', fontSize: '0.9em', opacity: 0.8 }}>Note: {row.note}</div>}
+                    </div>
+                  ))
+                ) : <div style={{ opacity: 0.5 }}>loading full steps...</div>}
+              </div>
+              {selectedDance?.originalStepSheetUrl && <div style={{ marginTop: '20px', textAlign: 'center' }}><a href={selectedDance.originalStepSheetUrl} target="_blank" rel="noreferrer" style={{ color: COLORS.PRIMARY, fontWeight: 'bold' }}>original sheet ↗</a></div>}
+            </div>
+          </div>
+        ) : (
+          /* --- MAIN TAB CONTENT --- */
+          <>
+            {currentTab === 'home' && (
+              <div>
+                <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                  <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} />
+                  <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>go</button>
                 </form>
-                <div onClick={() => setIsLoginView(!isLoginView)} style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY }}>{isLoginView ? 'need an account? sign up' : 'have an account? log in'}</div>
+
+                {recentSearches.length > 0 && results.length === 0 && (
+                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>recent:</span>
+                    {recentSearches.map(s => (
+                      <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>
+                    ))}
+                  </div>
+                )}
+
+                {results.map(d => (
+                  <div key={d.id} onClick={() => handleSelectDance(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div>
+                      <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
+                      <div style={{ fontSize: '13px', color: COLORS.SECONDARY, fontWeight: 'bold' }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
+                    </div>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
+                  </div>
+                ))}
               </div>
             )}
-          </div>
+
+            {currentTab === 'playlists' && (
+              <div>
+                {!viewingPlaylist ? (
+                  <>
+                    <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
+                      <input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="new playlist..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} />
+                      <button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px' }}>+</button>
+                    </div>
+                    {Object.keys(playlists).map(name => (
+                      <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                        <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
+                        <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '20px' }}>×</button>
+                      </div>
+                    ))}
+                  </>
+                ) : (
+                  <div>
+                    <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px' }}>← back</button>
+                    <h2 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>{viewingPlaylist}</h2>
+                    {playlists[viewingPlaylist].map(d => (
+                      <div key={d.id} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div onClick={() => handleSelectDance(d)} style={{ cursor: 'pointer' }}>
+                          <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
+                          <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
+                        </div>
+                        <button onClick={() => removeFromPlaylist(d.id, viewingPlaylist)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px' }}>remove</button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentTab === 'account' && (
+              <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                {user ? (
+                  <div style={{ textAlign: 'center' }}><p>signed in: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>sign out</button></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <button onClick={handleGoogleLogin} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>sign in with google</button>
+                    <form onSubmit={handleEmailAuth} style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
+                      <input type="email" placeholder="email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
+                      <input type="password" placeholder="password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
+                      <button type="submit" style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'login' : 'sign up'}</button>
+                    </form>
+                    <div onClick={() => setIsLoginView(!isLoginView)} style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY }}>{isLoginView ? 'need an account? sign up' : 'have an account? log in'}</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

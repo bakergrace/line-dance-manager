@@ -49,7 +49,7 @@ export default function MasterController() {
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
 
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const saved = localStorage.getItem('dance_mgr_v13');
+    const saved = localStorage.getItem('dance_mgr_v14');
     return saved ? JSON.parse(saved) : {
       "dances i know": [],
       "dances i kinda know": [],
@@ -58,7 +58,7 @@ export default function MasterController() {
   });
 
   useEffect(() => {
-    localStorage.setItem('dance_mgr_v13', JSON.stringify(playlists));
+    localStorage.setItem('dance_mgr_v14', JSON.stringify(playlists));
   }, [playlists]);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -76,17 +76,17 @@ export default function MasterController() {
         return {
           id: item.id,
           title: item.title,
-          difficultyLevel: item.difficultyLevel || "Unknown",
+          difficultyLevel: item.difficultyLevel || "unknown",
           counts: item.counts ?? item.count ?? 0,
           wallCount: Number(rawWalls),
           stepSheetUrl: item.stepSheetUrl ?? item.stepsheet ?? "",
-          songTitle: item.danceSongs?.[0]?.song?.title || "Unknown Song",
-          songArtist: item.danceSongs?.[0]?.song?.artist || "Unknown Artist"
+          songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
+          songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
         };
       });
       setResults(mapped);
     } catch (err) {
-      console.error("Search error", err);
+      console.error("search error", err);
     }
   };
 
@@ -110,12 +110,12 @@ export default function MasterController() {
           ← back
         </button>
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
-          <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700, fontStyle: 'normal', color: COLORS.PRIMARY }}>{selectedDance.title}</h1>
+          <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700, fontStyle: 'normal', color: COLORS.PRIMARY }}>{selectedDance.title.toLowerCase()}</h1>
           <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '20px' }}>
-            {selectedDance.difficultyLevel} • {selectedDance.counts} counts • {selectedDance.wallCount} walls
+            {selectedDance.difficultyLevel.toLowerCase()} • {selectedDance.counts} counts • {selectedDance.wallCount} walls
           </div>
-          <p><strong>song:</strong> {selectedDance.songTitle}</p>
-          <p><strong>artist:</strong> {selectedDance.songArtist}</p>
+          <p><strong>song:</strong> {selectedDance.songTitle.toLowerCase()}</p>
+          <p><strong>artist:</strong> {selectedDance.songArtist.toLowerCase()}</p>
           <div style={{ marginTop: '30px' }}>
             <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>add to:</h3>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -133,14 +133,15 @@ export default function MasterController() {
 
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
+      {/* HEADER: Sticky positioning as requested */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
           
-          {/* LOGO: Scaled up to 180px for better aesthetic impact */}
+          {/* LOGO: Doubled size to 360px */}
           <img 
             src={bootstepperLogo} 
             alt="bootstepper logo" 
-            style={{ maxHeight: '180px', width: 'auto', marginBottom: '10px' }} 
+            style={{ maxHeight: '360px', width: 'auto', marginBottom: '20px', display: 'block', marginLeft: 'auto', marginRight: 'auto' }} 
           />
 
           <div style={{ display: 'flex', justifyContent: 'center', borderBottom: `1px solid ${COLORS.PRIMARY}40` }}>
@@ -192,8 +193,8 @@ export default function MasterController() {
               <div style={{ backgroundColor: COLORS.WHITE, padding: '10px', borderRadius: '12px', textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 {results.map(d => (
                   <div key={d.id} onClick={() => setSelectedDance(d)} style={{ padding: '15px', borderBottom: `1px solid ${COLORS.PRIMARY}20`, cursor: 'pointer' }}>
-                    <div style={{ fontWeight: 'bold', fontSize: '18px', color: COLORS.PRIMARY }}>{d.title}</div>
-                    <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} - {d.songArtist}</div>
+                    <div style={{ fontWeight: 'bold', fontSize: '18px', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
+                    <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} - {d.songArtist.toLowerCase()}</div>
                   </div>
                 ))}
               </div>
@@ -238,8 +239,8 @@ export default function MasterController() {
                   playlists[viewingPlaylist].map(d => (
                     <div key={d.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: COLORS.WHITE, padding: '12px', margin: '8px 0', borderRadius: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                       <div onClick={() => setSelectedDance(d)} style={{ flex: 1, cursor: 'pointer' }}>
-                        <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div>
-                        <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.difficultyLevel} • {d.counts}c</div>
+                        <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
+                        <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.difficultyLevel.toLowerCase()} • {d.counts}c</div>
                       </div>
                       <button onClick={() => removeFromPlaylist(d.id, viewingPlaylist)} style={{ background: 'none', color: COLORS.SECONDARY, border: `1px solid ${COLORS.SECONDARY}`, padding: '5px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>remove</button>
                     </div>

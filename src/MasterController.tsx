@@ -1,15 +1,17 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, 
   signInWithPopup, 
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
   signOut, 
   GoogleAuthProvider, 
   onAuthStateChanged
 } from "firebase/auth";
-// FIX: Explicitly importing 'User' as a type to resolve the strict TypeScript issue
+// FIX: Explicitly importing 'User' as a type
 import type { User } from "firebase/auth";
 
 import { 
@@ -89,7 +91,12 @@ export default function MasterController() {
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  
+  // Auth State
   const [user, setUser] = useState<User | null>(null);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [isLoginView, setIsLoginView] = useState(true); // Toggle between Login/Signup
 
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>({
       "dances i know": [],
@@ -167,9 +174,23 @@ export default function MasterController() {
     setPlaylists(prev => ({ ...prev, [listName]: prev[listName].filter(d => d.id !== danceId) }));
   };
 
+  // --- LOGIN HANDLERS ---
   const handleGoogleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
-    catch (err) { alert("login failed: " + err); }
+    catch (err: any) { alert("login failed: " + err.message); }
+  };
+
+  const handleEmailAuth = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (isLoginView) {
+        await signInWithEmailAndPassword(auth, email, password);
+      } else {
+        await createUserWithEmailAndPassword(auth, email, password);
+      }
+    } catch (err: any) {
+      alert("auth error: " + err.message);
+    }
   };
 
   if (selectedDance) {
@@ -217,7 +238,6 @@ export default function MasterController() {
               <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', cursor: 'pointer' }}>go</button>
             </form>
             
-            {/* SEARCH RESULTS LIST: Restoring this block fixes the "declared but never read" error */}
             {results.length > 0 && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '10px', borderRadius: '12px', textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 {results.map(d => (
@@ -267,13 +287,48 @@ export default function MasterController() {
           <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', textAlign: 'left' }}>
             <h2 style={{ color: COLORS.PRIMARY, fontSize: '1.5rem', marginBottom: '10px' }}>account & sync</h2>
             <p style={{ color: COLORS.PRIMARY, marginBottom: '30px' }}>sign in to sync your playlists online.</p>
+            
             {user ? (
               <div style={{ textAlign: 'center' }}>
                 <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>signed in as {user.email}</p>
                 <button onClick={() => signOut(auth)} style={{ width: '100%', backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>sign out</button>
               </div>
             ) : (
-              <button onClick={handleGoogleLogin} style={{ width: '100%', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>sign in with google</button>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                {/* GOOGLE LOGIN */}
+                <button onClick={handleGoogleLogin} style={{ width: '100%', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                  sign in with google
+                </button>
+
+                <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
+
+                {/* EMAIL LOGIN FORM */}
+                <form onSubmit={handleEmailAuth} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <input 
+                    type="email" 
+                    placeholder="email" 
+                    value={email} 
+                    onChange={e => setEmail(e.target.value)} 
+                    style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }}
+                    required 
+                  />
+                  <input 
+                    type="password" 
+                    placeholder="password" 
+                    value={password} 
+                    onChange={e => setPassword(e.target.value)} 
+                    style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }}
+                    required 
+                  />
+                  <button type="submit" style={{ width: '100%', backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>
+                    {isLoginView ? 'login with email' : 'create account'}
+                  </button>
+                </form>
+
+                <div style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY, fontWeight: 'bold' }} onClick={() => setIsLoginView(!isLoginView)}>
+                  {isLoginView ? 'need an account? sign up' : 'have an account? log in'}
+                </div>
+              </div>
             )}
           </div>
         )}

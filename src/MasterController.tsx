@@ -119,7 +119,7 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // Load Initial Data (Playlists & Recent Searches)
+  // Load Initial Data
   useEffect(() => {
     const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
     if (localPlaylists) setPlaylists(JSON.parse(localPlaylists));
@@ -168,7 +168,6 @@ export default function MasterController() {
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
     
-    // Save to Recents
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
@@ -213,7 +212,9 @@ export default function MasterController() {
         setSelectedDance(prev => prev ? ({ 
           ...prev, 
           stepSheetContent: content,
-          originalStepSheetUrl: officialUrl 
+          originalStepSheetUrl: officialUrl,
+          songTitle: details.danceSongs?.[0]?.song?.title || prev.songTitle,
+          songArtist: details.danceSongs?.[0]?.song?.artist || prev.songArtist
         }) : null);
       }
     } catch (err) { console.error(err); }
@@ -225,7 +226,6 @@ export default function MasterController() {
       ...prev,
       [listName]: [...prev[listName], dance]
     }));
-    // Note: No screen clear logic here to prevent the blank screen bug.
   };
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
@@ -261,7 +261,6 @@ export default function MasterController() {
     } catch (err: any) { alert("auth error: " + err.message); }
   };
 
-  // --- DANCE PROFILE VIEW ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
@@ -288,7 +287,6 @@ export default function MasterController() {
                 selectedDance.stepSheetContent.map((row, idx) => (
                   <div key={idx} style={{ marginBottom: '6px' }}>
                     {(row.heading || row.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '10px' }}>{row.heading || row.title}</div>}
-                    {/* ENHANCED PARSER: Checks for multiple instruction fields */}
                     {(row.text || row.description || row.instruction) && (
                       <div style={{ display: 'flex' }}>
                         {row.counts && <span style={{ fontWeight: 'bold', width: '35px', flexShrink: 0 }}>{row.counts}</span>}
@@ -330,7 +328,6 @@ export default function MasterController() {
               <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>go</button>
             </form>
 
-            {/* RECENT SEARCHES */}
             {recentSearches.length > 0 && !results.length && (
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                 <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>recent:</span>
@@ -342,8 +339,13 @@ export default function MasterController() {
 
             {results.map(d => (
               <div key={d.id} onClick={() => handleSelectDance(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div></div>
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
+                <div>
+                  <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
+                  <div style={{ fontSize: '13px', color: COLORS.SECONDARY, fontWeight: 'bold' }}>
+                    {d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}
+                  </div>
+                </div>
+                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel), flexShrink: 0, marginLeft: '10px' }} />
               </div>
             ))}
           </div>
@@ -367,10 +369,13 @@ export default function MasterController() {
             ) : (
               <div>
                 <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px' }}>← back</button>
-                <h2>{viewingPlaylist}</h2>
+                <h2 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>{viewingPlaylist}</h2>
                 {playlists[viewingPlaylist].map(d => (
-                  <div key={d.id} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between' }}>
-                    <div onClick={() => handleSelectDance(d)} style={{ cursor: 'pointer' }}><div style={{ fontWeight: 'bold' }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '11px' }}>{d.difficultyLevel}</div></div>
+                  <div key={d.id} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div onClick={() => handleSelectDance(d)} style={{ cursor: 'pointer' }}>
+                      <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
+                      <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
+                    </div>
                     <button onClick={() => removeFromPlaylist(d.id, viewingPlaylist)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px' }}>remove</button>
                   </div>
                 ))}

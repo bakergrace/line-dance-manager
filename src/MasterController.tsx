@@ -38,12 +38,12 @@ export default function MasterController() {
   const [results, setResults] = useState<Dance[]>([]);
   const [selectedDance, setSelectedDance] = useState<Dance | null>(null);
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const saved = localStorage.getItem('dance_mgr_v8');
+    const saved = localStorage.getItem('dance_mgr_v9');
     return saved ? JSON.parse(saved) : { "Dances I Know": [], "Dances I Kinda Know": [], "Dances I Want to Know": [] };
   });
 
   useEffect(() => {
-    localStorage.setItem('dance_mgr_v8', JSON.stringify(playlists));
+    localStorage.setItem('dance_mgr_v9', JSON.stringify(playlists));
   }, [playlists]);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -57,6 +57,7 @@ export default function MasterController() {
       const items = (data.items || []) as ApiRawItem[];
 
       const mapped = items.map((item) => {
+        // Fallback logic for wall counts and other data fields
         const rawWalls = item.walls ?? item.wallCount ?? 0;
         return {
           id: item.id,
@@ -81,6 +82,7 @@ export default function MasterController() {
     setSelectedDance(null);
   };
 
+  // --- VIEW 1: INDIVIDUAL DANCE PAGE ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: '#184C78', minHeight: '100vh', color: 'white', padding: '40px', fontFamily: "'Roboto', sans-serif" }}>
@@ -94,6 +96,11 @@ export default function MasterController() {
           </div>
           <p><strong>Song:</strong> {selectedDance.songTitle}</p>
           <p><strong>Artist:</strong> {selectedDance.songArtist}</p>
+          {selectedDance.stepSheetUrl && (
+            <a href={selectedDance.stepSheetUrl} target="_blank" rel="noreferrer" style={{ display: 'inline-block', marginTop: '10px', color: '#60a5fa', textDecoration: 'underline' }}>
+              View Stepsheet Shortcut
+            </a>
+          )}
           <div style={{ display: 'flex', gap: '10px', marginTop: '30px' }}>
             <button onClick={() => addToPlaylist(selectedDance, "Dances I Know")} style={{ flex: 1, backgroundColor: '#16a34a', color: 'white', border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>KNOW</button>
             <button onClick={() => addToPlaylist(selectedDance, "Dances I Kinda Know")} style={{ flex: 1, backgroundColor: '#ca8a04', color: 'white', border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>KINDA</button>
@@ -104,6 +111,7 @@ export default function MasterController() {
     );
   }
 
+  // --- VIEW 2: MAIN SEARCH & PLAYLIST VIEW ---
   return (
     <div style={{ backgroundColor: '#184C78', minHeight: '100vh', color: 'white', padding: '40px', fontFamily: "'Roboto', sans-serif" }}>
       <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center' }}>
@@ -114,6 +122,19 @@ export default function MasterController() {
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '300px', borderRadius: '4px', border: 'none', fontFamily: "'Roboto', sans-serif" }} />
           <button type="submit" style={{ padding: '12px 24px', marginLeft: '10px', backgroundColor: '#fbbf24', border: 'none', borderRadius: '4px', fontWeight: 'bold', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>SEARCH</button>
         </form>
+
+        {/* RESULTS SECTION: Clears 'results never read' error */}
+        {results.length > 0 && (
+          <div style={{ backgroundColor: 'rgba(0,0,0,0.2)', padding: '20px', borderRadius: '12px', textAlign: 'left', marginBottom: '40px' }}>
+            {results.map(d => (
+              <div key={d.id} onClick={() => setSelectedDance(d)} style={{ padding: '15px', borderBottom: '1px solid rgba(255,255,255,0.1)', cursor: 'pointer' }}>
+                <div style={{ fontWeight: 'bold', fontSize: '18px' }}>{d.title}</div>
+                <div style={{ fontSize: '13px', color: '#fbbf24' }}>{d.songTitle} - {d.songArtist}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '20px' }}>
           {Object.entries(playlists).map(([name, list]) => (
             <div key={name} style={{ backgroundColor: 'rgba(255,255,255,0.05)', padding: '15px', borderRadius: '10px', textAlign: 'left', minHeight: '400px' }}>

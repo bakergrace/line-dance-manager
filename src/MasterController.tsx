@@ -91,10 +91,19 @@ const mapped = (data.items || []).map((item: any) => {
   }
 
   // --- VIEW 2: MAIN SEARCH & PLAYLIST VIEW ---
-  return (
-    <div style={{ backgroundColor: '#184C78', minHeight: '100vh', color: 'white', padding: '40px', fontFamily: 'Arial, sans-serif' }}>
-      <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center' }}>
-        <h1 style={{ fontStyle: 'italic', fontSize: '2.5rem', marginBottom: '30px' }}>BootStepper Manager</h1>
+  {/* --- THE MAIN SEARCH & PLAYLIST VIEW --- */}
+return (
+  <div style={{ backgroundColor: '#184C78', ... }}>
+    <div style={{ maxWidth: '900px', ... }}>
+      {/* REPLACE THE H1 TAG BELOW */}
+      <h1 style={{ 
+        fontFamily: "'Roboto', sans-serif", 
+        color: 'white', 
+        fontStyle: 'normal', 
+        fontWeight: 700 
+      }}>
+        BootStepper
+      </h1>
         
         <form onSubmit={handleSearch} style={{ marginBottom: '40px' }}>
           <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '300px', borderRadius: '4px', border: 'none' }} />

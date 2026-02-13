@@ -33,6 +33,8 @@ export interface Dance {
   songTitle: string;
   songArtist: string;
   stepSheetContent?: string[]; 
+  originalStepSheetUrl?: string;
+  stepSheetId?: string; // FIX: Added this missing property
   wallCount: number;
 }
 
@@ -46,7 +48,7 @@ interface ApiRawItem {
   wallCount?: number;
   stepSheetId?: string;
   stepsheet?: string;
-  videoCount?: number; // Added for Popularity Sorting
+  originalStepSheetUrl?: string; 
   danceSongs?: Array<{
     song?: { title?: string; artist?: string; };
   }>;
@@ -164,6 +166,7 @@ export default function MasterController() {
     };
   }, []);
 
+  // --- 1. SEARCH: RELEVANCE SORTING ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query) return;
@@ -172,51 +175,80 @@ export default function MasterController() {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const data = await res.json();
-      
-      // 1. GET ITEMS
       const items = (data.items || []) as ApiRawItem[];
-
-      // 2. SORT BY POPULARITY (videoCount DESCENDING)
-      items.sort((a, b) => (b.videoCount || 0) - (a.videoCount || 0));
-
-      // 3. MAP TO VIEW
+      
       setResults(items.map(item => ({
         id: item.id,
         title: item.title,
         difficultyLevel: item.difficultyLevel || "unknown",
         counts: item.counts ?? item.count ?? 0,
         wallCount: Number(item.walls ?? item.wallCount ?? 0),
+        originalStepSheetUrl: item.originalStepSheetUrl,
+        stepSheetId: item.stepSheetId, // Now mapped correctly without error
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
     } catch (err) { console.error(err); }
   };
 
+  // --- 2. STEP SHEET: FULL CONTENT & FALLBACK ---
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
 
     try {
-      const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${basicDance.id}`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+      // Fetch full details
+      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
+         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
+      const details = await detailsRes.json();
+      
+      const officialUrl = details.originalStepSheetUrl || basicDance.originalStepSheetUrl;
+      const sheetId = details.stepSheetId || basicDance.stepSheetId;
 
-      if (sheetRes.ok) {
-        const sheetData = await sheetRes.json();
-        let parsedLines: string[] = [];
-        if (Array.isArray(sheetData.content)) {
-          parsedLines = sheetData.content.map((row: any) => row.text || "");
-        } else if (typeof sheetData.content === 'string') {
-          parsedLines = [sheetData.content];
-        } else {
-          parsedLines = ["no text content found."];
+      let parsedLines: string[] = [];
+
+      // Try fetching via sheet ID first
+      if (sheetId) {
+        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
+          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+        });
+
+        if (sheetRes.ok) {
+          const sheetData = await sheetRes.json();
+          if (Array.isArray(sheetData.content)) {
+            parsedLines = sheetData.content.map((row: any) => row.text || row.heading || "");
+          } else if (typeof sheetData.content === 'string') {
+            parsedLines = [sheetData.content];
+          }
         }
-        setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: parsedLines }) : null);
-      } else {
-        setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: ["step sheet not found for this dance."] }) : null);
+      } 
+      // Fallback: If no sheetId, try fetching using the Dance ID directly (sometimes APIs use the same ID)
+      else if (basicDance.id) {
+         const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${basicDance.id}`, {
+          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+        });
+        if (sheetRes.ok) {
+          const sheetData = await sheetRes.json();
+          if (Array.isArray(sheetData.content)) {
+            parsedLines = sheetData.content.map((row: any) => row.text || row.heading || "");
+          }
+        }
       }
+
+      // If still no content, set placeholder
+      if (parsedLines.length === 0) {
+        parsedLines = ["Preview not available via API."];
+      }
+
+      setSelectedDance(prev => prev ? ({ 
+        ...prev, 
+        stepSheetContent: parsedLines,
+        originalStepSheetUrl: officialUrl 
+      }) : null);
+
     } catch (err) {
       console.error("error fetching details:", err);
-      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: ["error loading step sheet."] }) : null);
+      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: ["Error loading step sheet."] }) : null);
     }
   };
 
@@ -283,14 +315,27 @@ export default function MasterController() {
           <div style={{ marginTop: '40px', borderTop: `1px solid ${COLORS.PRIMARY}20`, paddingTop: '20px' }}>
             <h3 style={{ fontSize: '1.5rem', marginBottom: '15px', color: COLORS.PRIMARY }}>step sheet</h3>
             <div style={{ backgroundColor: '#F9F9F9', padding: '20px', borderRadius: '8px', fontSize: '14px', lineHeight: '1.6', color: '#333' }}>
-              {selectedDance.stepSheetContent ? (
+              {selectedDance.stepSheetContent && selectedDance.stepSheetContent.length > 0 ? (
                 selectedDance.stepSheetContent.map((line, index) => (
-                  <div key={index} style={{ marginBottom: '4px' }}>{line}</div>
+                  <div key={index} style={{ marginBottom: '4px', minHeight: '1em' }}>{line}</div>
                 ))
               ) : (
                 <div style={{ fontStyle: 'italic', opacity: 0.6 }}>loading step sheet...</div>
               )}
             </div>
+
+            {selectedDance.originalStepSheetUrl && (
+              <div style={{ marginTop: '20px', textAlign: 'center' }}>
+                <a 
+                  href={selectedDance.originalStepSheetUrl} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={{ color: COLORS.PRIMARY, fontWeight: 'bold', textDecoration: 'none', borderBottom: `2px solid ${COLORS.SECONDARY}` }}
+                >
+                  view original step sheet ↗
+                </a>
+              </div>
+            )}
           </div>
         </div>
       </div>

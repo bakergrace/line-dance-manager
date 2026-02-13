@@ -1,7 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
+
+// --- FIREBASE IMPORTS ---
+import { initializeApp } from "firebase/app";
+import { 
+  getAuth, 
+  signInWithPopup, 
+  signOut, 
+  GoogleAuthProvider, 
+  onAuthStateChanged
+} from "firebase/auth";
+// FIX: Explicitly importing 'User' as a type to resolve the strict TypeScript issue
+import type { User } from "firebase/auth";
+
+import { 
+  getFirestore, 
+  doc, 
+  setDoc, 
+  getDoc 
+} from "firebase/firestore";
+
+// --- IMAGES ---
 import bootstepperLogo from './bootstepper-logo.png';
 import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 
+// --- DATA DEFINITIONS ---
 export interface Dance {
   id: string;
   title: string;
@@ -28,6 +50,23 @@ interface ApiRawItem {
   }>;
 }
 
+// --- FIREBASE CONFIGURATION ---
+const firebaseConfig = {
+  apiKey: "AIzaSyDJKpgrqvKlzcaIf32meAvtMraF01As4o0",
+  authDomain: "bootstepper-a5fb5.firebaseapp.com",
+  projectId: "bootstepper-a5fb5",
+  storageBucket: "bootstepper-a5fb5.firebasestorage.app",
+  messagingSenderId: "602764031635",
+  appId: "1:602764031635:web:169206d1a0b72bf209ff66",
+  measurementId: "G-WV254NV2C7"
+};
+
+// Initialize Firebase
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+const googleProvider = new GoogleAuthProvider();
+
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 const BASE_URL = 'https://cors-anywhere.herokuapp.com/https://api.bootstepper.com';
 
@@ -39,12 +78,10 @@ const COLORS = {
 };
 
 const STORAGE_KEYS = {
-  PERMANENT: 'bootstepper_permanent_storage',
-  LEGACY: 'dance_mgr_v15'
+  PERMANENT: 'bootstepper_permanent_storage'
 };
 
 export default function MasterController() {
-  // Added 'account' to the tab state
   const [currentTab, setCurrentTab] = useState<'home' | 'playlists' | 'account'>('home');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
@@ -52,25 +89,40 @@ export default function MasterController() {
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  
-  // File input ref for the "Restore" feature
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [user, setUser] = useState<User | null>(null);
 
-  const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const permanentData = localStorage.getItem(STORAGE_KEYS.PERMANENT);
-    if (permanentData) return JSON.parse(permanentData);
-    const legacyData = localStorage.getItem(STORAGE_KEYS.LEGACY);
-    if (legacyData) return JSON.parse(legacyData);
-    return {
+  const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>({
       "dances i know": [],
       "dances i kinda know": [],
       "dances i want to know": []
-    };
   });
+
+  // --- AUTH & CLOUD SYNC ---
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        const docRef = doc(db, "users", currentUser.uid);
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          setPlaylists(docSnap.data() as { [key: string]: Dance[] });
+        } else {
+          await setDoc(docRef, playlists);
+        }
+      } else {
+        const local = localStorage.getItem(STORAGE_KEYS.PERMANENT);
+        if (local) setPlaylists(JSON.parse(local));
+      }
+    });
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-  }, [playlists]);
+    if (user) {
+      setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
+    }
+  }, [playlists, user]);
 
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
@@ -87,28 +139,22 @@ export default function MasterController() {
     e.preventDefault();
     if (!query) return;
     try {
-      const response = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=10`, {
+      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=10`, {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
-      const data = await response.json();
+      const data = await res.json();
       const items = (data.items || []) as ApiRawItem[];
-      const mapped = items.map((item) => {
-        const rawWalls = item.walls ?? item.wallCount ?? 0;
-        return {
-          id: item.id,
-          title: item.title,
-          difficultyLevel: item.difficultyLevel || "unknown",
-          counts: item.counts ?? item.count ?? 0,
-          wallCount: Number(rawWalls),
-          stepSheetUrl: item.stepSheetUrl ?? item.stepsheet ?? "",
-          songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
-          songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
-        };
-      });
-      setResults(mapped);
-    } catch (err) {
-      console.error("search error", err);
-    }
+      setResults(items.map(item => ({
+        id: item.id,
+        title: item.title,
+        difficultyLevel: item.difficultyLevel || "unknown",
+        counts: item.counts ?? item.count ?? 0,
+        wallCount: Number(item.walls ?? item.wallCount ?? 0),
+        stepSheetUrl: item.stepSheetUrl ?? item.stepsheet ?? "",
+        songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
+        songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
+      })));
+    } catch (err) { console.error(err); }
   };
 
   const addToPlaylist = (dance: Dance, listName: string) => {
@@ -121,38 +167,9 @@ export default function MasterController() {
     setPlaylists(prev => ({ ...prev, [listName]: prev[listName].filter(d => d.id !== danceId) }));
   };
 
-  // --- ACCOUNT FUNCTIONS ---
-  const handleDownloadBackup = () => {
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(playlists));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", "bootstepper_backup.json");
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
-  };
-
-  const handleRestoreBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const fileReader = new FileReader();
-    if (event.target.files && event.target.files[0]) {
-      fileReader.readAsText(event.target.files[0], "UTF-8");
-      fileReader.onload = (e) => {
-        try {
-          if (e.target?.result) {
-            const parsedData = JSON.parse(e.target.result as string);
-            // Basic validation to ensure it's a playlist object
-            if (parsedData["dances i know"]) {
-              setPlaylists(parsedData);
-              alert("Backup restored successfully!");
-            } else {
-              alert("Invalid backup file.");
-            }
-          }
-        } catch (error) {
-          alert("Error reading file.");
-        }
-      };
-    }
+  const handleGoogleLogin = async () => {
+    try { await signInWithPopup(auth, googleProvider); } 
+    catch (err) { alert("login failed: " + err); }
   };
 
   if (selectedDance) {
@@ -193,13 +210,14 @@ export default function MasterController() {
       </div>
       <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
         
-        {/* --- TAB: HOME --- */}
         {currentTab === 'home' && (
           <div>
             <form onSubmit={handleSearch} style={{ marginBottom: '30px', display: 'flex', justifyContent: 'center' }}>
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', color: COLORS.PRIMARY }} />
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', color: COLORS.PRIMARY }} />
               <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', cursor: 'pointer' }}>go</button>
             </form>
+            
+            {/* SEARCH RESULTS LIST: Restoring this block fixes the "declared but never read" error */}
             {results.length > 0 && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '10px', borderRadius: '12px', textAlign: 'left', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 {results.map(d => (
@@ -210,10 +228,10 @@ export default function MasterController() {
                 ))}
               </div>
             )}
+            
           </div>
         )}
 
-        {/* --- TAB: PLAYLISTS --- */}
         {currentTab === 'playlists' && (
           <div style={{ textAlign: 'left' }}>
             {!viewingPlaylist ? (
@@ -227,9 +245,9 @@ export default function MasterController() {
               </div>
             ) : (
               <div>
-                <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', padding: '10px 0', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← back to playlists</button>
+                <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', padding: '10px 0', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← back</button>
                 <h2 style={{ fontSize: '1.5rem', borderBottom: `1px solid ${COLORS.PRIMARY}40`, paddingBottom: '10px', fontWeight: 700, color: COLORS.PRIMARY }}>{viewingPlaylist}</h2>
-                {playlists[viewingPlaylist].length === 0 ? <p style={{ opacity: 0.5, fontStyle: 'italic', color: COLORS.PRIMARY }}>no dances added yet.</p> :
+                {playlists[viewingPlaylist].length === 0 ? <p style={{ opacity: 0.5, fontStyle: 'italic', color: COLORS.PRIMARY }}>no dances yet.</p> :
                   playlists[viewingPlaylist].map(d => (
                     <div key={d.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: COLORS.WHITE, padding: '12px', margin: '8px 0', borderRadius: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
                       <div onClick={() => setSelectedDance(d)} style={{ flex: 1, cursor: 'pointer' }}>
@@ -245,37 +263,20 @@ export default function MasterController() {
           </div>
         )}
 
-        {/* --- TAB: ACCOUNT (BACKUP & RESTORE) --- */}
         {currentTab === 'account' && (
           <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', textAlign: 'left' }}>
-            <h2 style={{ color: COLORS.PRIMARY, fontSize: '1.5rem', marginBottom: '10px', marginTop: 0 }}>account & data</h2>
-            <p style={{ color: COLORS.PRIMARY, marginBottom: '30px', lineHeight: '1.5' }}>
-              use these tools to preserve your data. save a backup file to your device, or load a file to restore your playlists.
-            </p>
-
-            <div style={{ marginBottom: '30px' }}>
-              <h3 style={{ fontSize: '1.1rem', color: COLORS.SECONDARY }}>backup</h3>
-              <button onClick={handleDownloadBackup} style={{ width: '100%', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>
-                save data to file
-              </button>
-            </div>
-
-            <div>
-              <h3 style={{ fontSize: '1.1rem', color: COLORS.SECONDARY }}>restore</h3>
-              <input 
-                type="file" 
-                accept=".json" 
-                ref={fileInputRef} 
-                style={{ display: 'none' }} 
-                onChange={handleRestoreBackup} 
-              />
-              <button onClick={() => fileInputRef.current?.click()} style={{ width: '100%', backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', fontFamily: "'Roboto', sans-serif" }}>
-                load data from file
-              </button>
-            </div>
+            <h2 style={{ color: COLORS.PRIMARY, fontSize: '1.5rem', marginBottom: '10px' }}>account & sync</h2>
+            <p style={{ color: COLORS.PRIMARY, marginBottom: '30px' }}>sign in to sync your playlists online.</p>
+            {user ? (
+              <div style={{ textAlign: 'center' }}>
+                <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>signed in as {user.email}</p>
+                <button onClick={() => signOut(auth)} style={{ width: '100%', backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>sign out</button>
+              </div>
+            ) : (
+              <button onClick={handleGoogleLogin} style={{ width: '100%', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>sign in with google</button>
+            )}
           </div>
         )}
-
       </div>
     </div>
   );

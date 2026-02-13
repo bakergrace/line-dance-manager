@@ -32,7 +32,7 @@ export interface Dance {
   counts: number;
   songTitle: string;
   songArtist: string;
-  stepSheetContent?: string[]; 
+  stepSheetContent?: any[]; // Changed to any[] to handle rich objects
   originalStepSheetUrl?: string;
   stepSheetId?: string;
   wallCount: number;
@@ -89,15 +89,15 @@ const STORAGE_KEYS = {
   PERMANENT: 'bootstepper_permanent_storage'
 };
 
-// --- DIFFICULTY COLORS (5-Color Spectrum) ---
+// --- DIFFICULTY COLORS (Updated to Industry Standards) ---
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
   
-  if (l.includes('absolute')) return '#29B6F6';     // Light Blue
-  if (l.includes('beginner')) return '#66BB6A';     // Green
-  if (l.includes('improver')) return '#FFA726';     // Orange/Amber
-  if (l.includes('intermediate')) return '#EF5350'; // Red
-  if (l.includes('advanced')) return '#AB47BC';     // Purple
+  if (l.includes('absolute')) return '#00BCD4';     // Cyan/Light Blue
+  if (l.includes('beginner')) return '#4CAF50';     // Green
+  if (l.includes('improver')) return '#FF9800';     // Orange
+  if (l.includes('intermediate')) return '#F44336'; // Red
+  if (l.includes('advanced')) return '#9C27B0';     // Purple
   
   return COLORS.NEUTRAL; 
 };
@@ -172,12 +172,11 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- SEARCH: DANCE DATABASE ONLY ---
+  // --- SEARCH: DANCE DB ONLY ---
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!query) return;
     try {
-      // STRICTLY using the /dances/search endpoint
       const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(query)}&limit=50`, {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
@@ -192,19 +191,17 @@ export default function MasterController() {
         wallCount: Number(item.walls ?? item.wallCount ?? 0),
         originalStepSheetUrl: item.originalStepSheetUrl,
         stepSheetId: item.stepSheetId,
-        // Extracting song info from the dance object
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
     } catch (err) { console.error(err); }
   };
 
-  // --- SELECT DANCE: FETCH FULL PROFILE ---
+  // --- SELECT DANCE: ROBUST STEP SHEET PARSING ---
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
 
     try {
-      // 1. Fetch Full Profile via /dances/getById
       const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
@@ -213,52 +210,45 @@ export default function MasterController() {
       const officialUrl = details.originalStepSheetUrl || basicDance.originalStepSheetUrl;
       const sheetId = details.stepSheetId || basicDance.stepSheetId;
 
-      let parsedLines: string[] = [];
+      let sheetContent: any[] = [];
 
-      // 2. Fetch Step Sheet via /dances/getStepSheet
-      if (sheetId) {
-        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
+      // Helper to fetch and parse
+      const fetchSheet = async (id: string) => {
+        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${id}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
         });
-
         if (sheetRes.ok) {
           const sheetData = await sheetRes.json();
           if (Array.isArray(sheetData.content)) {
-            parsedLines = sheetData.content.map((row: any) => row.text || row.heading || "");
+            return sheetData.content; // Return the raw array to render it smartly
           } else if (typeof sheetData.content === 'string') {
-            parsedLines = [sheetData.content];
+            return [{ text: sheetData.content }];
           }
         }
-      } 
-      // Fallback: Try fetching by Dance ID if StepSheet ID is missing
-      else if (basicDance.id) {
-         const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${basicDance.id}`, {
-          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-        });
-        if (sheetRes.ok) {
-          const sheetData = await sheetRes.json();
-          if (Array.isArray(sheetData.content)) {
-            parsedLines = sheetData.content.map((row: any) => row.text || row.heading || "");
-          }
-        }
+        return [];
+      };
+
+      if (sheetId) {
+        sheetContent = await fetchSheet(sheetId);
+      } else if (basicDance.id) {
+        sheetContent = await fetchSheet(basicDance.id);
       }
 
-      if (parsedLines.length === 0) {
-        parsedLines = ["Preview not available via API."];
+      if (sheetContent.length === 0) {
+        sheetContent = [{ text: "Preview not available via API." }];
       }
 
       setSelectedDance(prev => prev ? ({ 
         ...prev, 
-        stepSheetContent: parsedLines,
+        stepSheetContent: sheetContent,
         originalStepSheetUrl: officialUrl,
-        // Ensure song info is preserved/updated from details if needed
         songTitle: details.danceSongs?.[0]?.song?.title || prev.songTitle,
         songArtist: details.danceSongs?.[0]?.song?.artist || prev.songArtist
       }) : null);
 
     } catch (err) {
       console.error("error fetching details:", err);
-      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: ["Error loading step sheet."] }) : null);
+      setSelectedDance(prev => prev ? ({ ...prev, stepSheetContent: [{ text: "Error loading step sheet." }] }) : null);
     }
   };
 
@@ -322,12 +312,33 @@ export default function MasterController() {
             </div>
           </div>
 
+          {/* STEP SHEET RENDERER */}
           <div style={{ marginTop: '40px', borderTop: `1px solid ${COLORS.PRIMARY}20`, paddingTop: '20px' }}>
             <h3 style={{ fontSize: '1.5rem', marginBottom: '15px', color: COLORS.PRIMARY }}>step sheet</h3>
             <div style={{ backgroundColor: '#F9F9F9', padding: '20px', borderRadius: '8px', fontSize: '14px', lineHeight: '1.6', color: '#333' }}>
               {selectedDance.stepSheetContent && selectedDance.stepSheetContent.length > 0 ? (
-                selectedDance.stepSheetContent.map((line, index) => (
-                  <div key={index} style={{ marginBottom: '4px', minHeight: '1em' }}>{line}</div>
+                selectedDance.stepSheetContent.map((row, index) => (
+                  <div key={index} style={{ marginBottom: '8px' }}>
+                    {/* Render Headings in BOLD */}
+                    {(row.heading || row.title) && (
+                      <div style={{ fontWeight: 'bold', textTransform: 'uppercase', marginBottom: '4px', color: COLORS.PRIMARY }}>
+                        {row.heading || row.title}
+                      </div>
+                    )}
+                    {/* Render Counts & Text */}
+                    {row.text && (
+                      <div style={{ display: 'flex' }}>
+                        {row.counts && <span style={{ fontWeight: 'bold', marginRight: '10px', minWidth: '30px' }}>{row.counts}</span>}
+                        <span>{row.text}</span>
+                      </div>
+                    )}
+                    {/* Render Notes in Italics */}
+                    {row.note && (
+                      <div style={{ fontStyle: 'italic', color: '#666', marginTop: '2px', fontSize: '0.9em' }}>
+                        Note: {row.note}
+                      </div>
+                    )}
+                  </div>
                 ))
               ) : (
                 <div style={{ fontStyle: 'italic', opacity: 0.6 }}>loading step sheet...</div>

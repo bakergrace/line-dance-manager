@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -119,17 +119,17 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // --- SAFE INITIAL LOAD ---
+  // --- INITIAL LOAD ---
   useEffect(() => {
     try {
       const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
       if (localPlaylists) setPlaylists(JSON.parse(localPlaylists));
       const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
       if (localRecent) setRecentSearches(JSON.parse(localRecent));
-    } catch (e) { console.error("Critical Load Failure", e); }
+    } catch (e) { console.error("Load Error", e); }
   }, []);
 
-  // --- FIREBASE SYNC ---
+  // --- AUTH SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -149,12 +149,12 @@ export default function MasterController() {
     return () => unsubscribe();
   }, []);
 
-  // --- PERSISTENCE LAYER ---
+  // --- SAVE LAYER ---
   useEffect(() => {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
       if (user) {
-        setDoc(doc(db, "users", user.uid), playlists).catch(err => console.error("Cloud Save Error", err));
+        setDoc(doc(db, "users", user.uid), playlists).catch(err => console.error("Save Error", err));
       }
     }
   }, [playlists, user, isDataLoaded]);
@@ -223,24 +223,16 @@ export default function MasterController() {
           };
         });
       }
-    } catch (err) { console.error("Profile Fetch Error", err); }
+    } catch (err) { console.error("Fetch Error", err); }
   };
 
-  // --- MASTER FIX: STABILIZED PLAYLIST UPDATE ---
+  // --- IMMUTABLE PLAYLIST LOGIC ---
   const addToPlaylist = useCallback((dance: Dance, listName: string) => {
     if (!dance || !listName) return;
-    
-    // Prevent UI crash by using an immutable functional update
     setPlaylists(prev => {
       const currentList = prev[listName] || [];
-      const alreadyExists = currentList.some(item => item.id === dance.id);
-      
-      if (alreadyExists) return prev;
-
-      return {
-        ...prev,
-        [listName]: [...currentList, { ...dance }] // Clone dance to break object references
-      };
+      if (currentList.some(item => item.id === dance.id)) return prev;
+      return { ...prev, [listName]: [...currentList, { ...dance }] };
     });
   }, []);
 
@@ -254,13 +246,13 @@ export default function MasterController() {
   const createPlaylist = () => {
     if (!newPlaylistName.trim()) return;
     const name = newPlaylistName.trim().toLowerCase();
-    if (playlists[name]) return alert("playlist already exists");
+    if (playlists[name]) return alert("Playlist exists");
     setPlaylists(prev => ({ ...prev, [name]: [] }));
     setNewPlaylistName('');
   };
 
   const deletePlaylist = (listName: string) => {
-    if (confirm(`delete "${listName}"?`)) {
+    if (confirm(`Delete "${listName}"?`)) {
       setPlaylists(prev => {
         const newState = { ...prev };
         delete newState[listName];
@@ -269,10 +261,9 @@ export default function MasterController() {
     }
   };
 
-  // --- AUTH HANDLERS ---
   const handleGoogleLogin = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
-    catch (err: any) { alert("login failed: " + err.message); }
+    catch (err: any) { alert("Login failed: " + err.message); }
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
@@ -280,40 +271,28 @@ export default function MasterController() {
     try {
       if (isLoginView) await signInWithEmailAndPassword(auth, email, password);
       else await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err: any) { alert("auth error: " + err.message); }
+    } catch (err: any) { alert("Auth error: " + err.message); }
   };
 
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
-  // --- RENDER LOGIC ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
-      
-      {/* HEADER SECTION */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: '0.3s' }} />
           <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
             {['home', 'playlists', 'account'].map(t => (
-              <button 
-                key={t} 
-                onClick={() => { setCurrentTab(t as any); setViewingPlaylist(null); setSelectedDance(null); }} 
-                style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentTab === t ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}
-              >
-                {t}
-              </button>
+              <button key={t} onClick={() => { setCurrentTab(t as any); setViewingPlaylist(null); setSelectedDance(null); }} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentTab === t ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>{t}</button>
             ))}
           </div>
         </div>
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-        
-        {/* --- DANCE PROFILE VIEW (CRASH-PROOF GATE) --- */}
         {selectedDance ? (
-          <div key={`profile-${selectedDance.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
+          <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
             <button onClick={() => setSelectedDance(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '5px', cursor: 'pointer', marginBottom: '20px' }}>← back</button>
-            
             <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700 }}>{selectedDance?.title?.toLowerCase() || 'loading...'}</h1>
             <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '20px' }}>{selectedDance?.difficultyLevel?.toLowerCase()} • {selectedDance?.counts} counts • {selectedDance?.wallCount} walls</div>
             <p><strong>song:</strong> {selectedDance?.songTitle?.toLowerCase()}</p>
@@ -323,13 +302,7 @@ export default function MasterController() {
               <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>add to playlist:</h3>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
                 {Object.keys(playlists).map(name => (
-                  <button 
-                    key={`btn-${name}`} 
-                    onClick={() => addToPlaylist(selectedDance, name)} 
-                    style={{ flex: '1 1 100px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}
-                  >
-                    {name}
-                  </button>
+                  <button key={name} onClick={() => addToPlaylist(selectedDance, name)} style={{ flex: '1 1 100px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{name}</button>
                 ))}
               </div>
             </div>
@@ -339,7 +312,7 @@ export default function MasterController() {
               <div style={{ backgroundColor: '#F9F9F9', padding: '15px', borderRadius: '8px', fontSize: '14px', color: '#333' }}>
                 {selectedDance?.stepSheetContent && selectedDance.stepSheetContent.length > 0 ? (
                   selectedDance.stepSheetContent.map((row, idx) => (
-                    <div key={`row-${idx}`} style={{ marginBottom: '6px' }}>
+                    <div key={idx} style={{ marginBottom: '6px' }}>
                       {(row?.heading || row?.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '10px' }}>{row.heading || row.title}</div>}
                       {(row?.text || row?.description || row?.instruction) && (
                         <div style={{ display: 'flex' }}>
@@ -359,8 +332,7 @@ export default function MasterController() {
             </div>
           </div>
         ) : (
-          /* --- MAIN TAB CONTENT --- */
-          <div key="tabs-container">
+          <>
             {currentTab === 'home' && (
               <div>
                 <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
@@ -372,16 +344,16 @@ export default function MasterController() {
                   <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                     <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>recent:</span>
                     {recentSearches.map(s => (
-                      <button key={`rec-${s}`} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>
+                      <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>
                     ))}
                   </div>
                 )}
 
                 {results.map(d => (
-                  <div key={`res-${d.id}`} onClick={() => handleSelectDance(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                  <div key={d.id} onClick={() => handleSelectDance(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                     <div>
                       <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
-                      <div style={{ fontSize: '13px', color: COLORS.SECONDARY, fontWeight: 'bold' }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
+                      <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
                     </div>
                     <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
                   </div>
@@ -398,7 +370,7 @@ export default function MasterController() {
                       <button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px' }}>+</button>
                     </div>
                     {Object.keys(playlists).map(name => (
-                      <div key={`list-${name}`} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                      <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                         <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}>
                           <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2>
                           <span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span>
@@ -412,7 +384,7 @@ export default function MasterController() {
                     <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px' }}>← back</button>
                     <h2 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>{viewingPlaylist}</h2>
                     {playlists[viewingPlaylist]?.map(d => (
-                      <div key={`p-item-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div key={d.id} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div onClick={() => handleSelectDance(d)} style={{ cursor: 'pointer' }}>
                           <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
                           <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
@@ -442,7 +414,7 @@ export default function MasterController() {
                 )}
               </div>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>

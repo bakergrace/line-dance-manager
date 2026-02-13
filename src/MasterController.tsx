@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import bootstepperLogo from './bootstepper-logo.png'; // Import the logo
+import bootstepperLogo from './bootstepper-logo.png';
 
 // --- DATA DEFINITIONS ---
 export interface Dance {
@@ -34,7 +34,6 @@ interface ApiRawItem {
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 const BASE_URL = 'https://cors-anywhere.herokuapp.com/https://api.bootstepper.com';
 
-// --- COLOR CONSTANTS ---
 const COLORS = {
   BACKGROUND: '#EEEBE8',
   PRIMARY: '#36649A',
@@ -43,17 +42,14 @@ const COLORS = {
 };
 
 export default function MasterController() {
-  // Open the app to a home tab instead of search
   const [currentTab, setCurrentTab] = useState<'home' | 'playlists'>('home');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
   const [selectedDance, setSelectedDance] = useState<Dance | null>(null);
-  // New state to track which playlist is currently being viewed
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
 
-  // Playlist names are all lowercase
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(() => {
-    const saved = localStorage.getItem('dance_mgr_v12');
+    const saved = localStorage.getItem('dance_mgr_v13');
     return saved ? JSON.parse(saved) : {
       "dances i know": [],
       "dances i kinda know": [],
@@ -62,7 +58,7 @@ export default function MasterController() {
   });
 
   useEffect(() => {
-    localStorage.setItem('dance_mgr_v12', JSON.stringify(playlists));
+    localStorage.setItem('dance_mgr_v13', JSON.stringify(playlists));
   }, [playlists]);
 
   const handleSearch = async (e: React.FormEvent) => {
@@ -107,21 +103,19 @@ export default function MasterController() {
     }));
   };
 
-  // --- SUB-VIEW: INDIVIDUAL DANCE PAGE ---
   if (selectedDance) {
     return (
       <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', color: COLORS.PRIMARY, padding: '20px', fontFamily: "'Roboto', sans-serif" }}>
         <button onClick={() => setSelectedDance(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '5px', cursor: 'pointer', marginBottom: '30px', fontFamily: "'Roboto', sans-serif" }}>
-          ← Back
+          ← back
         </button>
         <div style={{ maxWidth: '600px', margin: '0 auto', backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
           <h1 style={{ fontSize: '2rem', marginBottom: '10px', fontWeight: 700, fontStyle: 'normal', color: COLORS.PRIMARY }}>{selectedDance.title}</h1>
-          {/* Use secondary color for minor accents */}
           <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '20px' }}>
-            {selectedDance.difficultyLevel} • {selectedDance.counts} Counts • {selectedDance.wallCount} Walls
+            {selectedDance.difficultyLevel} • {selectedDance.counts} counts • {selectedDance.wallCount} walls
           </div>
-          <p><strong>Song:</strong> {selectedDance.songTitle}</p>
-          <p><strong>Artist:</strong> {selectedDance.songArtist}</p>
+          <p><strong>song:</strong> {selectedDance.songTitle}</p>
+          <p><strong>artist:</strong> {selectedDance.songArtist}</p>
           <div style={{ marginTop: '30px' }}>
             <h3 style={{ fontSize: '1.2rem', marginBottom: '15px' }}>add to:</h3>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '10px' }}>
@@ -139,24 +133,24 @@ export default function MasterController() {
 
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
-      {/* Header and tabs stay in place when scrolling */}
-      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
-          {/* Exchange the words at the top of the site for the attached .png file */}
-          <img src={bootstepperLogo} alt="BootStepper Logo" style={{ maxHeight: '60px', marginBottom: '20px' }} />
+          
+          {/* LOGO: Scaled up to 180px for better aesthetic impact */}
+          <img 
+            src={bootstepperLogo} 
+            alt="bootstepper logo" 
+            style={{ maxHeight: '180px', width: 'auto', marginBottom: '10px' }} 
+          />
 
-          {/* --- NAVIGATION TABS --- */}
           <div style={{ display: 'flex', justifyContent: 'center', borderBottom: `1px solid ${COLORS.PRIMARY}40` }}>
-            {/* Use all lowercase for tab titles */}
             <button
               onClick={() => { setCurrentTab('home'); setViewingPlaylist(null); }}
               style={{
                 padding: '10px 30px',
                 background: 'none',
-                // Use primary color for text and outline/tabs
                 color: COLORS.PRIMARY,
                 border: 'none',
-                // Use secondary color for minor accents (active tab border)
                 borderBottom: currentTab === 'home' ? `3px solid ${COLORS.SECONDARY}` : 'none',
                 fontWeight: 'bold',
                 cursor: 'pointer',
@@ -166,7 +160,6 @@ export default function MasterController() {
             >
               home
             </button>
-            {/* Change the playlist tab title from ‘my playlists’ to ‘playlists’ */}
             <button
               onClick={() => { setCurrentTab('playlists'); setViewingPlaylist(null); }}
               style={{
@@ -188,12 +181,11 @@ export default function MasterController() {
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
-        {/* --- TAB CONTENT: HOME (with Search) --- */}
         {currentTab === 'home' && (
           <div>
             <form onSubmit={handleSearch} style={{ marginBottom: '30px', display: 'flex', justifyContent: 'center' }}>
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, fontFamily: "'Roboto', sans-serif", outline: 'none', color: COLORS.PRIMARY }} />
-              <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', fontFamily: "'Roboto', sans-serif", cursor: 'pointer' }}>GO</button>
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, fontFamily: "'Roboto', sans-serif", outline: 'none', color: COLORS.PRIMARY }} />
+              <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', fontFamily: "'Roboto', sans-serif", cursor: 'pointer' }}>go</button>
             </form>
 
             {results.length > 0 && (
@@ -209,12 +201,9 @@ export default function MasterController() {
           </div>
         )}
 
-        {/* --- TAB CONTENT: PLAYLISTS --- */}
         {currentTab === 'playlists' && (
           <div style={{ textAlign: 'left' }}>
-            {/* Allow the user to click on each playlist, similar to how a music app works */}
             {!viewingPlaylist ? (
-              // Main Playlist View: List of Playlists
               <div>
                 {Object.keys(playlists).map(listName => (
                   <div
@@ -238,14 +227,13 @@ export default function MasterController() {
                 ))}
               </div>
             ) : (
-              // Detail View: Dances inside a specific playlist
               <div>
                 <button onClick={() => setViewingPlaylist(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', padding: '10px 0', cursor: 'pointer', marginBottom: '20px', fontFamily: "'Roboto', sans-serif", fontWeight: 'bold', display: 'flex', alignItems: 'center' }}>
-                  ← Back to Playlists
+                  ← back to playlists
                 </button>
                 <h2 style={{ fontSize: '1.5rem', borderBottom: `1px solid ${COLORS.PRIMARY}40`, paddingBottom: '10px', fontWeight: 700, color: COLORS.PRIMARY }}>{viewingPlaylist}</h2>
                 {playlists[viewingPlaylist].length === 0 ? (
-                  <p style={{ opacity: 0.5, fontStyle: 'italic', color: COLORS.PRIMARY }}>No dances added yet.</p>
+                  <p style={{ opacity: 0.5, fontStyle: 'italic', color: COLORS.PRIMARY }}>no dances added yet.</p>
                 ) : (
                   playlists[viewingPlaylist].map(d => (
                     <div key={d.id} style={{ display: 'flex', alignItems: 'center', backgroundColor: COLORS.WHITE, padding: '12px', margin: '8px 0', borderRadius: '8px', boxShadow: '0 1px 2px rgba(0,0,0,0.05)' }}>
@@ -253,7 +241,7 @@ export default function MasterController() {
                         <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div>
                         <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.difficultyLevel} • {d.counts}c</div>
                       </div>
-                      <button onClick={() => removeFromPlaylist(d.id, viewingPlaylist)} style={{ background: 'none', color: COLORS.SECONDARY, border: `1px solid ${COLORS.SECONDARY}`, padding: '5px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>REMOVE</button>
+                      <button onClick={() => removeFromPlaylist(d.id, viewingPlaylist)} style={{ background: 'none', color: COLORS.SECONDARY, border: `1px solid ${COLORS.SECONDARY}`, padding: '5px 10px', borderRadius: '4px', fontSize: '12px', fontWeight: 'bold', cursor: 'pointer' }}>remove</button>
                     </div>
                   ))
                 )}

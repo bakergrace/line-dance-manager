@@ -72,17 +72,15 @@ const googleProvider = new GoogleAuthProvider();
 
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 
-// FIXED: Using the standard dev proxy which supports headers correctly
-const PROXY_URL = 'https://cors-anywhere.herokuapp.com/'; 
-const API_BASE = 'https://api.bootstepper.com';
+// FIXED: Now using local Vercel rewrite to bypass CORS invisibly
+const BASE_URL = '/api';
 
 const COLORS = {
   BACKGROUND: '#EEEBE8',
   PRIMARY: '#36649A',
   SECONDARY: '#D99AB1',
   WHITE: '#FFFFFF',
-  NEUTRAL: '#9E9E9E',
-  WARNING: '#FF9800'
+  NEUTRAL: '#9E9E9E'  
 };
 
 const STORAGE_KEYS = {
@@ -109,11 +107,8 @@ export default function MasterController() {
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  const [loading, setLoading] = useState(false); 
+  const [loading, setLoading] = useState(false);
   
-  // NEW: State to track if the user needs to unlock the proxy
-  const [isCorsLocked, setIsCorsLocked] = useState(false);
-
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -182,31 +177,23 @@ export default function MasterController() {
     if (!searchQuery) return;
     
     setLoading(true);
-    setIsCorsLocked(false); // Reset lock state on new search
     
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
 
     try {
-      const targetUrl = `${API_BASE}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`;
+      // USING VERCEL REWRITE ROUTE
+      const targetUrl = `${BASE_URL}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`;
       
-      const res = await fetch(`${PROXY_URL}${targetUrl}`, {
+      const res = await fetch(targetUrl, {
         headers: { 
           'X-BootStepper-API-Key': API_KEY, 
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest'
+          'Content-Type': 'application/json'
         }
       });
       
-      if (!res.ok) {
-        // DETECT CORS LOCK (403 Forbidden is the signal)
-        if (res.status === 403) {
-            setIsCorsLocked(true);
-            throw new Error("Proxy Activation Required");
-        }
-        throw new Error(`API Status: ${res.status}`);
-      }
+      if (!res.ok) throw new Error(`API Status: ${res.status}`);
 
       const data = await res.json();
       const items = (data.items || []) as ApiRawItem[];
@@ -226,7 +213,7 @@ export default function MasterController() {
       })));
     } catch (err: any) { 
       console.error("Search Failed", err);
-      if (err.message === "Failed to fetch") setIsCorsLocked(true);
+      alert("Search failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -235,16 +222,18 @@ export default function MasterController() {
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
     try {
-      const detailsUrl = `${API_BASE}/dances/getById?id=${basicDance.id}`;
-      const detailsRes = await fetch(`${PROXY_URL}${detailsUrl}`, {
-         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+      // Fetch Details via Rewrite
+      const detailsUrl = `${BASE_URL}/dances/getById?id=${basicDance.id}`;
+      const detailsRes = await fetch(detailsUrl, {
+         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const details = await detailsRes.json();
       const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
 
-      const sheetUrl = `${API_BASE}/dances/getStepSheet?id=${sheetId}`;
-      const sheetRes = await fetch(`${PROXY_URL}${sheetUrl}`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+      // Fetch Sheet via Rewrite
+      const sheetUrl = `${BASE_URL}/dances/getStepSheet?id=${sheetId}`;
+      const sheetRes = await fetch(sheetUrl, {
+        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
 
       if (sheetRes.ok) {
@@ -313,6 +302,7 @@ export default function MasterController() {
 
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
+  // --- HELPER COMPONENT FOR STEPS ---
   const renderStepSheet = () => {
     if (!selectedDance?.stepSheetContent || selectedDance.stepSheetContent.length === 0) {
       return <div style={{ opacity: 0.5 }}>loading full steps...</div>;
@@ -348,25 +338,6 @@ export default function MasterController() {
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-        
-        {/* --- ERROR: CORS LOCK DETECTED --- */}
-        {isCorsLocked && (
-          <div style={{ backgroundColor: '#FFF3E0', color: '#E65100', padding: '15px', borderRadius: '8px', marginBottom: '20px', borderLeft: '5px solid #E65100', textAlign: 'center' }}>
-            <strong>First-time Setup Required:</strong><br/>
-            The search engine is locked. Please click below to enable it.
-            <br/>
-            <a 
-              href="https://cors-anywhere.herokuapp.com/corsdemo" 
-              target="_blank" 
-              rel="noreferrer"
-              style={{ display: 'inline-block', marginTop: '10px', padding: '8px 16px', backgroundColor: '#E65100', color: 'white', textDecoration: 'none', borderRadius: '4px', fontWeight: 'bold' }}
-            >
-              Unlock Search Engine
-            </a>
-            <div style={{ fontSize: '12px', marginTop: '5px' }}>(Click "Request temporary access" on the new page, then try searching again)</div>
-          </div>
-        )}
-
         {selectedDance ? (
           <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '15px', boxShadow: '0 4px 6px rgba(0,0,0,0.1)' }}>
             <button onClick={() => setSelectedDance(null)} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '5px', cursor: 'pointer', marginBottom: '20px' }}>← back</button>

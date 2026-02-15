@@ -71,7 +71,11 @@ const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
-const BASE_URL = 'https://api.bootstepper.com';
+
+// FIXED: Restored the CORS Proxy. This is critical for browser-based searching.
+const PROXY_URL = 'https://cors-anywhere.herokuapp.com/';
+const API_URL = 'https://api.bootstepper.com';
+const BASE_URL = `${PROXY_URL}${API_URL}`;
 
 const COLORS = {
   BACKGROUND: '#EEEBE8',
@@ -177,9 +181,17 @@ export default function MasterController() {
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
 
     try {
+      // USING PROXY URL TO BYPASS CORS
       const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+        headers: { 
+          'X-BootStepper-API-Key': API_KEY, 
+          'Content-Type': 'application/json',
+          'X-Requested-With': 'XMLHttpRequest' // Often helps with proxy requests
+        }
       });
+      
+      if (!res.ok) throw new Error(`API Status: ${res.status}`);
+
       const data = await res.json();
       const items = (data.items || []) as ApiRawItem[];
       setResults(items.map(item => ({
@@ -199,14 +211,16 @@ export default function MasterController() {
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
     try {
+      // Fetch details via Proxy
       const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
-         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
       });
       const details = await detailsRes.json();
       const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
 
+      // Fetch Sheet via Proxy
       const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
       });
 
       if (sheetRes.ok) {
@@ -380,7 +394,10 @@ export default function MasterController() {
                     </div>
                     {Object.keys(playlists).map(name => (
                       <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                        <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
+                        <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}>
+                          <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2>
+                          <span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span>
+                        </div>
                         <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '20px' }}>×</button>
                       </div>
                     ))}

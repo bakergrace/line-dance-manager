@@ -10,7 +10,7 @@ import {
   signOut, 
   onAuthStateChanged
 } from "firebase/auth";
-import type { User } from "firebase/auth";
+import type { User } from "firebase/auth"; 
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
   getFirestore, 
@@ -55,7 +55,7 @@ const STORAGE_KEYS = {
   RECENT_SEARCHES: 'bootstepper_recent_searches'
 };
 
-// --- DATA TYPES ---
+// --- INTERFACES ---
 export interface Dance {
   id: string;
   title: string;
@@ -85,7 +85,7 @@ interface ApiRawItem {
   }>;
 }
 
-// --- NAVIGATION TYPES ---
+// --- ROUTING TYPES ---
 type ReturnPath = 
   | { type: 'SEARCH' }
   | { type: 'PLAYLIST_DETAIL'; name: string };
@@ -97,39 +97,56 @@ type AppView =
   | { type: 'ACCOUNT' }
   | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
 
-// --- DATA NORMALIZER (THE FIREWALL) ---
-// This ensures that NO MATTER what the API returns, the app gets safe strings.
-const normalizeDanceData = (raw: any): Dance => {
-  return {
-    id: raw.id || 'unknown-id',
-    title: raw.title || 'Untitled Dance',
-    difficultyLevel: raw.difficultyLevel || 'Level Unknown',
-    counts: typeof raw.counts === 'number' ? raw.counts : (raw.count || 0),
-    wallCount: typeof raw.walls === 'number' ? raw.walls : (raw.wallCount || 0),
-    songTitle: raw.songTitle || raw.danceSongs?.[0]?.song?.title || 'Unknown Song',
-    songArtist: raw.songArtist || raw.danceSongs?.[0]?.song?.artist || 'Unknown Artist',
-    stepSheetContent: Array.isArray(raw.stepSheetContent) ? raw.stepSheetContent : [],
-    originalStepSheetUrl: raw.originalStepSheetUrl || '',
-    stepSheetId: raw.stepSheetId || raw.id
-  };
+// --- HELPERS ---
+
+// FIX #2: Regex to remove things like (L), (W), (A) from titles
+const cleanTitle = (title: string) => {
+  if (!title) return "Untitled";
+  return title.replace(/\s*\([a-zA-Z0-9\s]+\)$/, '').trim();
 };
 
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
-  if (l.includes('absolute')) return '#00BCD4';     
-  if (l.includes('beginner')) return '#4CAF50';     
-  if (l.includes('improver')) return '#FF9800';     
-  if (l.includes('intermediate')) return '#F44336'; 
-  if (l.includes('advanced')) return '#9C27B0';     
+  if (l.includes('absolute')) return '#00BCD4';     // Cyan
+  if (l.includes('beginner')) return '#4CAF50';     // Green
+  if (l.includes('improver')) return '#FF9800';     // Orange
+  if (l.includes('intermediate')) return '#F44336'; // Red
+  if (l.includes('advanced')) return '#9C27B0';     // Purple
   return COLORS.NEUTRAL; 
 };
 
+// FIX #3: The Color Legend Component
+const DifficultyLegend = () => (
+  <div style={{ 
+    display: 'flex', 
+    justifyContent: 'center', 
+    gap: '12px', 
+    padding: '15px', 
+    backgroundColor: COLORS.BACKGROUND, 
+    borderTop: `1px solid ${COLORS.PRIMARY}20`,
+    flexWrap: 'wrap',
+    fontSize: '11px',
+    color: '#666'
+  }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00BCD4' }} /> Absolute</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#4CAF50' }} /> Beginner</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#FF9800' }} /> Improver</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#F44336' }} /> Interm.</div>
+    <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#9C27B0' }} /> Advanced</div>
+  </div>
+);
+
+// --- MAIN CONTROLLER ---
 export default function MasterController() {
   const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   
+  // FIX #4: Pagination State
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 10;
+
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [loading, setLoading] = useState(false);
@@ -148,7 +165,7 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // --- INITIAL LOAD ---
+  // --- LIFECYCLE & SYNC ---
   useEffect(() => {
     try {
       const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
@@ -158,7 +175,6 @@ export default function MasterController() {
     } catch (e) { console.error("Load Error", e); }
   }, []);
 
-  // --- AUTH SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -178,7 +194,6 @@ export default function MasterController() {
     return () => unsubscribe();
   }, []);
 
-  // --- DATA SAVE ---
   useEffect(() => {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
@@ -188,7 +203,6 @@ export default function MasterController() {
     }
   }, [playlists, user, isDataLoaded]);
 
-  // --- UI LISTENERS ---
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -200,7 +214,7 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- NAVIGATION (BACK BUTTON FIX) ---
+  // --- NAVIGATION ---
   const navigateTo = (view: AppView) => {
     setCurrentView(view);
     window.scrollTo(0,0);
@@ -223,64 +237,54 @@ export default function MasterController() {
     }
   };
 
-  // --- CRITICAL FIX: FETCH-THEN-SHOW LOGIC ---
-  const loadDanceDetails = async (rawDance: any, source: ReturnPath) => {
-    if (!rawDance || !rawDance.id) return;
+  // --- FETCHING LOGIC (FIX #1: Soft Fail) ---
+  const loadDanceDetails = async (basicDance: Dance, source: ReturnPath) => {
+    if (!basicDance || !basicDance.id) return;
 
-    // 1. Show Global Loading Spinner immediately. Do NOT change view yet.
     setLoading(true);
 
+    // Prepare default "safe" object in case fetch fails
+    let fullDanceData = { ...basicDance };
+
     try {
-      // 2. Fetch all data first
-      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${rawDance.id}`, {
+      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       
-      let safeDetails = rawDance; // Fallback to what we have
-      let sheetContent: any[] = [];
-
       if (detailsRes.ok) {
-        safeDetails = await detailsRes.json();
-        const sheetId = safeDetails.stepSheetId || rawDance.stepSheetId || rawDance.id;
+        const details = await detailsRes.json();
+        fullDanceData = { ...fullDanceData, ...details }; // Merge details
         
-        // 3. Fetch steps
+        const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
         const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
           headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
         });
         
         if (sheetRes.ok) {
           const sheetData = await sheetRes.json();
-          if (Array.isArray(sheetData.content)) sheetContent = sheetData.content;
+          if (Array.isArray(sheetData.content)) {
+            fullDanceData.stepSheetContent = sheetData.content;
+          }
         }
       }
-
-      // 4. MERGE & NORMALIZE data. This prevents the "blank screen" crash.
-      // We combine the raw dance (from playlist) with the API details.
-      const fullDanceData = normalizeDanceData({
-        ...rawDance,
-        ...safeDetails,
-        stepSheetContent: sheetContent
-      });
-
-      // 5. Safe to switch view now. Data is guaranteed to be good.
-      setCurrentView({ 
-        type: 'DANCE_PROFILE', 
-        dance: fullDanceData, 
-        returnPath: source 
-      });
-
     } catch (err) {
-      console.error("Fetch Error", err);
-      alert("Could not load dance details. Please try again.");
-    } finally {
-      // 6. Turn off loader
-      setLoading(false);
+      console.warn("Details fetch failed, showing basic info", err);
+      // We do NOT alert/return here anymore. We proceed with basic data.
     }
+
+    // Always navigate, even if fetch failed partially
+    setCurrentView({ 
+      type: 'DANCE_PROFILE', 
+      dance: fullDanceData, 
+      returnPath: source 
+    });
+    setLoading(false);
   };
 
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
     setLoading(true);
+    setCurrentPage(1); // Reset pagination on new search
     
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
@@ -297,9 +301,17 @@ export default function MasterController() {
       
       if (items.length === 0) alert("No results found.");
 
-      // Normalize results immediately
-      setResults(items.map(item => normalizeDanceData(item)));
-
+      setResults(items.map(item => ({
+        id: item.id,
+        title: cleanTitle(item.title), // Applied Cleaner
+        difficultyLevel: item.difficultyLevel || "unknown",
+        counts: item.counts ?? item.count ?? 0,
+        wallCount: Number(item.walls ?? item.wallCount ?? 0),
+        originalStepSheetUrl: item.originalStepSheetUrl,
+        stepSheetId: item.stepSheetId,
+        songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
+        songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
+      })));
     } catch (err) { 
       console.error(err);
       alert("Search failed. Check connection.");
@@ -364,8 +376,7 @@ export default function MasterController() {
   const renderDanceProfile = (dance: Dance) => {
     if (!dance) return <div>Data Missing</div>;
     
-    // Safety Fallbacks (Redundant but safe)
-    const title = (dance.title || 'Untitled').toLowerCase();
+    const title = cleanTitle(dance.title || 'Untitled').toLowerCase();
     const level = (dance.difficultyLevel || 'unknown').toLowerCase();
     const song = (dance.songTitle || 'Unknown').toLowerCase();
     const artist = (dance.songArtist || 'Unknown').toLowerCase();
@@ -374,7 +385,7 @@ export default function MasterController() {
       <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
         <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
         <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{title}</h1>
-        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{level} • {dance.counts} counts • {dance.wallCount} walls</div>
+        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{level} • {dance.counts || 0} counts • {dance.wallCount || 0} walls</div>
         <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {song}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {artist}</p></div>
         
         <div style={{ marginBottom: '30px' }}>
@@ -400,7 +411,7 @@ export default function MasterController() {
                   {row?.note && <div style={{ fontStyle: 'italic', fontSize: '0.85rem', color: '#777', marginLeft: '40px' }}>Note: {row.note}</div>}
                 </div>
               ))
-            ) : <div style={{ opacity: 0.5 }}>No steps available.</div>}
+            ) : <div style={{ opacity: 0.5 }}>Step details unavailable via API.</div>}
           </div>
           {dance.originalStepSheetUrl && <div style={{ marginTop: '20px', textAlign: 'center' }}><a href={dance.originalStepSheetUrl} target="_blank" rel="noreferrer" style={{ color: COLORS.PRIMARY, fontWeight: 'bold' }}>View Original Sheet ↗</a></div>}
         </div>
@@ -408,7 +419,13 @@ export default function MasterController() {
     );
   };
 
-  // --- MAIN RENDER ---
+  // --- RENDER ---
+  // Pagination Math
+  const indexOfLastItem = currentPage * itemsPerPage;
+  const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+  const currentResults = results.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(results.length / itemsPerPage);
+
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
       
@@ -429,15 +446,14 @@ export default function MasterController() {
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
         
         {/* GLOBAL LOADER */}
-        {loading && <div style={{ textAlign: 'center', padding: '20px', fontSize: '1.2rem', color: COLORS.PRIMARY }}>Loading...</div>}
+        {loading && <div style={{ textAlign: 'center', padding: '40px', fontSize: '1.2rem', color: COLORS.PRIMARY, fontWeight: 'bold' }}>Finding dances...</div>}
 
-        {/* VIEWS (Hidden while loading to prevent flicker) */}
         {!loading && (
           <>
             {currentView.type === 'DANCE_PROFILE' && renderDanceProfile(currentView.dance)}
 
             {currentView.type === 'SEARCH' && (
-              <div>
+              <div style={{ paddingBottom: '60px' }}> {/* Space for Legend */}
                 <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
                   <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
                   <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>Go</button>
@@ -448,12 +464,35 @@ export default function MasterController() {
                     {recentSearches.map(s => <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
                   </div>
                 )}
-                {results.map(d => (
+                
+                {/* RESULTS LIST (PAGINATED) */}
+                {currentResults.map(d => (
                   <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                     <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
                     <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
                   </div>
                 ))}
+
+                {/* PAGINATION CONTROLS */}
+                {results.length > itemsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
+                    <button 
+                      onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} 
+                      disabled={currentPage === 1}
+                      style={{ padding: '8px 16px', background: COLORS.WHITE, border: `1px solid ${COLORS.PRIMARY}`, borderRadius: '6px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1, color: COLORS.PRIMARY, fontWeight: 'bold' }}
+                    >
+                      ← Prev
+                    </button>
+                    <span style={{ fontWeight: 'bold', color: '#666' }}>Page {currentPage} of {totalPages}</span>
+                    <button 
+                      onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} 
+                      disabled={currentPage === totalPages}
+                      style={{ padding: '8px 16px', background: COLORS.WHITE, border: `1px solid ${COLORS.PRIMARY}`, borderRadius: '6px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1, color: COLORS.PRIMARY, fontWeight: 'bold' }}
+                    >
+                      Next →
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
@@ -475,7 +514,7 @@ export default function MasterController() {
                 <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
                 {playlists[currentView.name] ? playlists[currentView.name].map(d => (
                   <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
+                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{cleanTitle(d.title).toLowerCase()}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div></div>
                     <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
                   </div>
                 )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
@@ -503,6 +542,9 @@ export default function MasterController() {
           </>
         )}
       </div>
+
+      {/* PERMANENT FOOTER LEGEND (FIX #3) */}
+      {currentView.type === 'SEARCH' && !loading && <div style={{ position: 'fixed', bottom: 0, width: '100%', zIndex: 100 }}><DifficultyLegend /></div>}
     </div>
   );
 }

@@ -70,12 +70,12 @@ const auth = getAuth(app);
 const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
+// CHECK: Ensure this is set in your Vercel Environment Variables!
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 
-// FIXED: Restored the CORS Proxy. This is critical for browser-based searching.
-const PROXY_URL = 'https://cors-anywhere.herokuapp.com/';
-const API_URL = 'https://api.bootstepper.com';
-const BASE_URL = `${PROXY_URL}${API_URL}`;
+// FIXED: Switched to 'corsproxy.io' for reliable, instant access without activation
+const PROXY_URL = 'https://corsproxy.io/?'; 
+const API_BASE = 'https://api.bootstepper.com';
 
 const COLORS = {
   BACKGROUND: '#EEEBE8',
@@ -109,6 +109,7 @@ export default function MasterController() {
   const [viewingPlaylist, setViewingPlaylist] = useState<string | null>(null);
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  const [loading, setLoading] = useState(false); // Added loading state for visual feedback
   
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
@@ -174,26 +175,43 @@ export default function MasterController() {
     };
   }, []);
 
+  // --- FIXED SEARCH FUNCTION ---
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
+    
+    // Alert if API Key is missing (Common Vercel issue)
+    if (!API_KEY) {
+      alert("System Error: API Key is missing. Please check Vercel environment variables.");
+      return;
+    }
+
+    setLoading(true); // Show loading state
+    
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
 
     try {
-      // USING PROXY URL TO BYPASS CORS
-      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`, {
+      // Construct the Proxied URL
+      const targetUrl = `${API_BASE}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`;
+      const finalUrl = `${PROXY_URL}${encodeURIComponent(targetUrl)}`;
+
+      const res = await fetch(finalUrl, {
         headers: { 
           'X-BootStepper-API-Key': API_KEY, 
-          'Content-Type': 'application/json',
-          'X-Requested-With': 'XMLHttpRequest' // Often helps with proxy requests
+          'Content-Type': 'application/json'
         }
       });
       
-      if (!res.ok) throw new Error(`API Status: ${res.status}`);
+      if (!res.ok) throw new Error(`Network Error: ${res.status}`);
 
       const data = await res.json();
       const items = (data.items || []) as ApiRawItem[];
+      
+      if (items.length === 0) {
+        alert("No dances found for that name.");
+      }
+
       setResults(items.map(item => ({
         id: item.id,
         title: item.title,
@@ -205,22 +223,29 @@ export default function MasterController() {
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
-    } catch (err) { console.error("Search Error", err); }
+    } catch (err: any) { 
+      console.error("Search Failed", err);
+      alert(`Search failed: ${err.message}. Please try again.`);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSelectDance = async (basicDance: Dance) => {
     setSelectedDance(basicDance);
     try {
-      // Fetch details via Proxy
-      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
-         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+      // PROXY: Fetch Details
+      const detailsUrl = `${API_BASE}/dances/getById?id=${basicDance.id}`;
+      const detailsRes = await fetch(`${PROXY_URL}${encodeURIComponent(detailsUrl)}`, {
+         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       const details = await detailsRes.json();
       const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
 
-      // Fetch Sheet via Proxy
-      const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }
+      // PROXY: Fetch Sheet
+      const sheetUrl = `${API_BASE}/dances/getStepSheet?id=${sheetId}`;
+      const sheetRes = await fetch(`${PROXY_URL}${encodeURIComponent(sheetUrl)}`, {
+        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
 
       if (sheetRes.ok) {
@@ -360,7 +385,7 @@ export default function MasterController() {
               <div>
                 <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
                   <input value={query} onChange={e => setQuery(e.target.value)} placeholder="search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none' }} />
-                  <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>go</button>
+                  <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>{loading ? '...' : 'go'}</button>
                 </form>
 
                 {recentSearches.length > 0 && results.length === 0 && (

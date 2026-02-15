@@ -1,9 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-// --- CRITICAL FIX: Split imports into Value vs Type ---
-import DanceProfile from './DanceProfile';
-import type { Dance } from './DanceProfile';
-
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
@@ -14,6 +10,7 @@ import {
   signOut, 
   onAuthStateChanged
 } from "firebase/auth";
+// Type-only import
 import type { User } from "firebase/auth"; 
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
@@ -27,7 +24,7 @@ import {
 import bootstepperLogo from './bootstepper-logo.png';
 import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 
-// --- API & CONFIG ---
+// --- CONFIGURATION ---
 const firebaseConfig = {
   apiKey: "AIzaSyDJKpgrqvKlzcaIf32meAvtMraF01As4o0",
   authDomain: "bootstepper-a5fb5.firebaseapp.com",
@@ -59,7 +56,20 @@ const STORAGE_KEYS = {
   RECENT_SEARCHES: 'bootstepper_recent_searches'
 };
 
-// --- TYPES ---
+// --- INTERFACES ---
+export interface Dance {
+  id: string;
+  title: string;
+  difficultyLevel: string;
+  counts: number;
+  songTitle: string;
+  songArtist: string;
+  stepSheetContent?: any[]; 
+  originalStepSheetUrl?: string;
+  stepSheetId?: string;
+  wallCount: number;
+}
+
 interface ApiRawItem {
   id: string;
   title: string;
@@ -76,7 +86,7 @@ interface ApiRawItem {
   }>;
 }
 
-// --- NEW ROBUST ROUTING SYSTEM ---
+// --- ROUTING TYPES ---
 type ReturnPath = 
   | { type: 'SEARCH' }
   | { type: 'PLAYLIST_DETAIL'; name: string };
@@ -100,14 +110,15 @@ const getDifficultyColor = (level: string) => {
 
 export default function MasterController() {
   const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
-  
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [loading, setLoading] = useState(false);
-  
+  const [activeBtn, setActiveBtn] = useState<string | null>(null);
+
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -143,7 +154,7 @@ export default function MasterController() {
           } else {
             await setDoc(docRef, playlists);
           }
-        } catch (error) { console.error("Cloud Sync Error", error); }
+        } catch (error) { console.error("Sync Error", error); }
       } 
       setIsDataLoaded(true);
     });
@@ -154,7 +165,7 @@ export default function MasterController() {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
       if (user) {
-        setDoc(doc(db, "users", user.uid), playlists).catch(err => console.error("Save Error", err));
+        setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
       }
     }
   }, [playlists, user, isDataLoaded]);
@@ -170,8 +181,7 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- ROUTING ACTIONS ---
-
+  // --- NAVIGATION ---
   const navigateTo = (view: AppView) => {
     setCurrentView(view);
     window.scrollTo(0,0);
@@ -194,7 +204,11 @@ export default function MasterController() {
     }
   };
 
+  // --- DATA FETCHING ---
   const loadDanceDetails = async (basicDance: Dance, source: ReturnPath) => {
+    // 1. Valid Data Check
+    if (!basicDance || !basicDance.id) return;
+
     setCurrentView({ 
       type: 'DANCE_PROFILE', 
       dance: { ...basicDance }, 
@@ -233,8 +247,6 @@ export default function MasterController() {
     } catch (err) { console.error("Fetch Error", err); }
   };
 
-  // --- ACTIONS ---
-
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
     setLoading(true);
@@ -248,11 +260,11 @@ export default function MasterController() {
         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
       
-      if (!res.ok) throw new Error(`API Status: ${res.status}`);
+      if (!res.ok) throw new Error(`Status: ${res.status}`);
       const data = await res.json();
       const items = (data.items || []) as ApiRawItem[];
       
-      if (items.length === 0) alert("No dances found.");
+      if (items.length === 0) alert("No results found.");
 
       setResults(items.map(item => ({
         id: item.id,
@@ -265,9 +277,9 @@ export default function MasterController() {
         songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
         songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
       })));
-    } catch (err: any) { 
-      console.error("Search Failed", err);
-      alert("Search failed. Check your network or API key.");
+    } catch (err) { 
+      console.error(err);
+      alert("Search failed. Check connection.");
     } finally {
       setLoading(false);
     }
@@ -275,11 +287,13 @@ export default function MasterController() {
 
   const addToPlaylist = useCallback((dance: Dance, listName: string) => {
     if (!dance || !listName) return;
+    setActiveBtn(listName);
     setPlaylists(prev => {
       const currentList = prev[listName] || [];
       if (currentList.some(item => item.id === dance.id)) return prev;
       return { ...prev, [listName]: [...currentList, { ...dance }] };
     });
+    setTimeout(() => setActiveBtn(null), 1000);
   }, []);
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
@@ -292,7 +306,7 @@ export default function MasterController() {
   const createPlaylist = () => {
     if (!newPlaylistName.trim()) return;
     const name = newPlaylistName.trim().toLowerCase();
-    if (playlists[name]) return alert("Playlist exists");
+    if (playlists[name]) return alert("Exists!");
     setPlaylists(prev => ({ ...prev, [name]: [] }));
     setNewPlaylistName('');
   };
@@ -314,23 +328,71 @@ export default function MasterController() {
     try {
       if (isLogin) await signInWithEmailAndPassword(auth, email, password);
       else await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err: any) { alert("Auth error: " + err.message); }
+    } catch (err: any) { alert(err.message); }
   };
   const handleGoogle = async () => {
     try { await signInWithPopup(auth, googleProvider); } 
-    catch (err: any) { alert("Login failed: " + err.message); }
+    catch (err: any) { alert(err.message); }
   };
 
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
+  // --- RENDER HELPERS ---
+  const renderDanceProfile = (dance: Dance) => {
+    if (!dance) return <div>Data Missing</div>;
+    
+    // Safety Fallbacks
+    const title = (dance.title || 'Untitled').toLowerCase();
+    const level = (dance.difficultyLevel || 'unknown').toLowerCase();
+    const song = (dance.songTitle || 'Unknown').toLowerCase();
+    const artist = (dance.songArtist || 'Unknown').toLowerCase();
+
+    return (
+      <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+        <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
+        <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{title}</h1>
+        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{level} • {dance.counts || 0} counts • {dance.wallCount || 0} walls</div>
+        <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {song}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {artist}</p></div>
+        
+        <div style={{ marginBottom: '30px' }}>
+          <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+            {Object.keys(playlists).map(name => {
+              const isAdded = playlists[name].some(d => d.id === dance.id);
+              return (
+                <button key={name} onClick={() => addToPlaylist(dance, name)} disabled={isAdded} style={{ flex: '1 1 auto', backgroundColor: isAdded ? '#81C784' : (activeBtn === name ? COLORS.SECONDARY : COLORS.PRIMARY), color: COLORS.WHITE, border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '600', cursor: isAdded ? 'default' : 'pointer' }}>{isAdded ? '✓ Added' : name}</button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}30`, paddingTop: '20px' }}>
+          <h3 style={{ fontSize: '1.4rem', marginBottom: '15px', color: COLORS.PRIMARY }}>Step Sheet</h3>
+          <div style={{ backgroundColor: '#FAFAFA', padding: '20px', borderRadius: '8px', fontSize: '14px', color: '#333', border: '1px solid #EEE' }}>
+            {dance.stepSheetContent && dance.stepSheetContent.length > 0 ? (
+              dance.stepSheetContent.map((row: any, idx: number) => (
+                <div key={idx} style={{ marginBottom: '8px' }}>
+                  {(row?.heading || row?.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '12px', textTransform: 'uppercase' }}>{row.heading || row.title}</div>}
+                  {(row?.text || row?.description || row?.instruction) && <div style={{ display: 'flex' }}>{row?.counts && <span style={{ fontWeight: 'bold', width: '40px', flexShrink: 0 }}>{row.counts}</span>}<span>{row.text || row.description || row.instruction}</span></div>}
+                  {row?.note && <div style={{ fontStyle: 'italic', fontSize: '0.85rem', color: '#777', marginLeft: '40px' }}>Note: {row.note}</div>}
+                </div>
+              ))
+            ) : <div style={{ opacity: 0.5 }}>No steps available.</div>}
+          </div>
+          {dance.originalStepSheetUrl && <div style={{ marginTop: '20px', textAlign: 'center' }}><a href={dance.originalStepSheetUrl} target="_blank" rel="noreferrer" style={{ color: COLORS.PRIMARY, fontWeight: 'bold' }}>View Original Sheet ↗</a></div>}
+        </div>
+      </div>
+    );
+  };
+
+  // --- MAIN RENDER ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
       
-      {/* GLOBAL HEADER */}
+      {/* HEADER */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: '0.3s' }} />
-          
           {currentView.type !== 'DANCE_PROFILE' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
               <button onClick={() => navigateTo({ type: 'SEARCH' })} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentView.type === 'SEARCH' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>Search</button>
@@ -342,97 +404,58 @@ export default function MasterController() {
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-        
-        {/* VIEW: DANCE PROFILE */}
-        {currentView.type === 'DANCE_PROFILE' && (
-          <DanceProfile 
-            dance={currentView.dance} 
-            playlists={playlists} 
-            onBack={handleBack} 
-            onAddToPlaylist={addToPlaylist}
-            colors={COLORS}
-          />
-        )}
+        {currentView.type === 'DANCE_PROFILE' && renderDanceProfile(currentView.dance)}
 
-        {/* VIEW: SEARCH */}
         {currentView.type === 'SEARCH' && (
           <div>
             <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
               <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
               <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>{loading ? '...' : 'Go'}</button>
             </form>
-
             {recentSearches.length > 0 && results.length === 0 && (
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                 <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
-                {recentSearches.map(s => (
-                  <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>
-                ))}
+                {recentSearches.map(s => <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
               </div>
             )}
-
             {results.map(d => (
               <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div>
-                  <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
-                  <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
-                </div>
+                <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div></div>
                 <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
               </div>
             ))}
           </div>
         )}
 
-        {/* VIEW: PLAYLISTS LIST */}
         {currentView.type === 'PLAYLISTS_LIST' && (
           <div>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}>
-              <input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} />
-              <button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button>
-            </div>
+            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button></div>
             {Object.keys(playlists).map(name => (
               <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}>
-                  <h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2>
-                  <span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span>
-                </div>
+                <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
                 <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px' }}>×</button>
               </div>
             ))}
           </div>
         )}
 
-        {/* VIEW: PLAYLIST DETAIL */}
         {currentView.type === 'PLAYLIST_DETAIL' && (
           <div>
             <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
             <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
-            
-            {playlists[currentView.name] ? (
-              playlists[currentView.name].length === 0 ? <div style={{ opacity: 0.5, fontStyle: 'italic' }}>This playlist is empty.</div> :
-              playlists[currentView.name].map(d => (
-                <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}>
-                    <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
-                    <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div>
-                  </div>
-                  <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
-                </div>
-              ))
-            ) : (
-              <div style={{ color: 'red' }}>Error: Playlist not found.</div>
-            )}
+            {playlists[currentView.name] ? playlists[currentView.name].map(d => (
+              <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div></div>
+                <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
+              </div>
+            )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
           </div>
         )}
 
-        {/* VIEW: ACCOUNT */}
         {currentView.type === 'ACCOUNT' && (
           <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
             {user ? (
-              <div style={{ textAlign: 'center' }}>
-                <p>Signed in as: <b>{user.email}</b></p>
-                <button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button>
-              </div>
+              <div style={{ textAlign: 'center' }}><p>Signed in as: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button></div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>Sign in with Google</button>

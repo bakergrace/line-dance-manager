@@ -97,15 +97,12 @@ type AppView =
   | { type: 'ACCOUNT' }
   | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
 
-// --- DATA SANITIZERS (THE CRASH PREVENTION LAYER) ---
-
-// 1. Title Cleaner: Removes (L), (W), etc.
+// --- DATA SANITIZERS ---
 const cleanTitle = (title: string | undefined) => {
   if (!title) return "Untitled";
   return String(title).replace(/\s*\([a-zA-Z0-9\s]+\)$/, '').trim();
 };
 
-// 2. Data Normalizer: Ensures no field is ever null or missing
 const normalizeDanceData = (raw: any): Dance => {
   if (!raw) return { id: 'error', title: 'Error', difficultyLevel: '', counts: 0, songTitle: '', songArtist: '', wallCount: 0 };
   
@@ -177,7 +174,6 @@ export default function MasterController() {
       const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
       if (localPlaylists) {
         const parsed = JSON.parse(localPlaylists);
-        // FORCE CLEAN on load
         const cleaned: any = {};
         Object.keys(parsed).forEach(key => {
           cleaned[key] = parsed[key].map((d: any) => normalizeDanceData(d));
@@ -198,7 +194,6 @@ export default function MasterController() {
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
             const data = docSnap.data();
-            // FORCE CLEAN on sync
             const cleaned: any = {};
             Object.keys(data).forEach(key => {
               cleaned[key] = (data[key] || []).map((d: any) => normalizeDanceData(d));
@@ -257,16 +252,13 @@ export default function MasterController() {
     }
   };
 
-  // --- DATA FETCHING (CRASH PROOF) ---
+  // --- DATA FETCHING ---
   const loadDanceDetails = async (rawDance: any, source: ReturnPath) => {
     if (!rawDance || !rawDance.id) return;
 
     setLoading(true);
-
-    // 1. Sanitize the incoming data immediately
     let cleanDance = normalizeDanceData(rawDance);
 
-    // 2. Attempt to fetch details, but don't die if it fails
     try {
       const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${cleanDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
@@ -274,7 +266,6 @@ export default function MasterController() {
       
       if (detailsRes.ok) {
         const details = await detailsRes.json();
-        // Merge & Clean again
         cleanDance = normalizeDanceData({ ...cleanDance, ...details });
         
         const sheetId = cleanDance.stepSheetId || cleanDance.id;
@@ -333,11 +324,14 @@ export default function MasterController() {
   const addToPlaylist = useCallback((dance: Dance, listName: string) => {
     if (!dance || !listName) return;
     setActiveBtn(listName);
+    
+    // SAFE STATE UPDATE
     setPlaylists(prev => {
       const currentList = prev[listName] || [];
       if (currentList.some(item => item.id === dance.id)) return prev;
       return { ...prev, [listName]: [...currentList, normalizeDanceData(dance)] };
     });
+    
     setTimeout(() => setActiveBtn(null), 1000);
   }, []);
 
@@ -384,7 +378,6 @@ export default function MasterController() {
 
   // --- RENDER HELPERS ---
   const renderDanceProfile = (dance: Dance) => {
-    // Safety Fallback (Should be caught by normalizeDanceData, but double-bagging it)
     if (!dance) return <div>Data Missing</div>;
     
     return (
@@ -398,7 +391,8 @@ export default function MasterController() {
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {Object.keys(playlists).map(name => {
-              const isAdded = playlists[name].some(d => d.id === dance.id);
+              // --- CRITICAL FIX: Safe access for .some() ---
+              const isAdded = (playlists[name] || []).some(d => d.id === dance.id);
               return (
                 <button key={name} onClick={() => addToPlaylist(dance, name)} disabled={isAdded} style={{ flex: '1 1 auto', backgroundColor: isAdded ? '#81C784' : (activeBtn === name ? COLORS.SECONDARY : COLORS.PRIMARY), color: COLORS.WHITE, border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '600', cursor: isAdded ? 'default' : 'pointer' }}>{isAdded ? '✓ Added' : name}</button>
               );

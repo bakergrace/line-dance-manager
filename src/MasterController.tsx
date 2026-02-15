@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 
-// FIXED: Split imports to satisfy 'verbatimModuleSyntax'
+// --- FIX: Split the imports into Value (Component) and Type (Interface) ---
 import DanceProfile from './DanceProfile';
-import type { Dance } from './DanceProfile';
+import type { Dance } from './DanceProfile'; 
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -14,7 +14,8 @@ import {
   signOut, 
   onAuthStateChanged
 } from "firebase/auth";
-import type { User } from "firebase/auth"; 
+// FIX: Explicit type import for Firebase User
+import type { User } from "firebase/auth";
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
   getFirestore, 
@@ -44,7 +45,7 @@ const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
-const BASE_URL = '/api'; // Using Vercel rewrite
+const BASE_URL = '/api'; 
 
 const COLORS = {
   BACKGROUND: '#EEEBE8',
@@ -76,13 +77,17 @@ interface ApiRawItem {
   }>;
 }
 
-// --- APP STATE TYPES ---
+// --- NEW ROBUST ROUTING SYSTEM ---
+type ReturnPath = 
+  | { type: 'SEARCH' }
+  | { type: 'PLAYLIST_DETAIL'; name: string };
+
 type AppView = 
   | { type: 'SEARCH' }
   | { type: 'PLAYLISTS_LIST' }
   | { type: 'PLAYLIST_DETAIL'; name: string }
   | { type: 'ACCOUNT' }
-  | { type: 'DANCE_PROFILE'; dance: Dance; previousView: AppView };
+  | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
 
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
@@ -95,7 +100,6 @@ const getDifficultyColor = (level: string) => {
 };
 
 export default function MasterController() {
-  // --- STATE ---
   const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
   
   const [query, setQuery] = useState('');
@@ -167,7 +171,7 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- ACTIONS ---
+  // --- ROUTING ACTIONS ---
 
   const navigateTo = (view: AppView) => {
     setCurrentView(view);
@@ -176,11 +180,61 @@ export default function MasterController() {
 
   const handleBack = () => {
     if (currentView.type === 'DANCE_PROFILE') {
-      setCurrentView(currentView.previousView);
+      const path = currentView.returnPath;
+      if (path.type === 'SEARCH') {
+        setCurrentView({ type: 'SEARCH' });
+      } else if (path.type === 'PLAYLIST_DETAIL') {
+        if (playlists[path.name]) {
+          setCurrentView({ type: 'PLAYLIST_DETAIL', name: path.name });
+        } else {
+          setCurrentView({ type: 'PLAYLISTS_LIST' });
+        }
+      }
     } else if (currentView.type === 'PLAYLIST_DETAIL') {
       navigateTo({ type: 'PLAYLISTS_LIST' });
     }
   };
+
+  const loadDanceDetails = async (basicDance: Dance, source: ReturnPath) => {
+    setCurrentView({ 
+      type: 'DANCE_PROFILE', 
+      dance: { ...basicDance }, 
+      returnPath: source 
+    });
+
+    try {
+      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
+         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+      });
+      const details = await detailsRes.json();
+      const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
+
+      const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
+        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+      });
+
+      if (sheetRes.ok) {
+        const sheetData = await sheetRes.json();
+        const content = Array.isArray(sheetData.content) ? sheetData.content : [];
+        
+        setCurrentView(prev => {
+            if (prev.type !== 'DANCE_PROFILE' || prev.dance.id !== basicDance.id) return prev;
+            return {
+                ...prev,
+                dance: {
+                    ...prev.dance,
+                    stepSheetContent: content,
+                    originalStepSheetUrl: details.originalStepSheetUrl || prev.dance.originalStepSheetUrl,
+                    songTitle: details.danceSongs?.[0]?.song?.title || prev.dance.songTitle,
+                    songArtist: details.danceSongs?.[0]?.song?.artist || prev.dance.songArtist
+                }
+            };
+        });
+      }
+    } catch (err) { console.error("Fetch Error", err); }
+  };
+
+  // --- ACTIONS ---
 
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
@@ -220,46 +274,6 @@ export default function MasterController() {
     }
   };
 
-  const loadDanceDetails = async (basicDance: Dance) => {
-    const newView: AppView = { 
-      type: 'DANCE_PROFILE', 
-      dance: { ...basicDance }, 
-      previousView: currentView 
-    };
-    setCurrentView(newView);
-
-    try {
-      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
-         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-      });
-      const details = await detailsRes.json();
-      const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
-
-      const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-      });
-
-      if (sheetRes.ok) {
-        const sheetData = await sheetRes.json();
-        const content = Array.isArray(sheetData.content) ? sheetData.content : [];
-        
-        setCurrentView(prev => {
-            if (prev.type !== 'DANCE_PROFILE' || prev.dance.id !== basicDance.id) return prev;
-            return {
-                ...prev,
-                dance: {
-                    ...prev.dance,
-                    stepSheetContent: content,
-                    originalStepSheetUrl: details.originalStepSheetUrl || prev.dance.originalStepSheetUrl,
-                    songTitle: details.danceSongs?.[0]?.song?.title || prev.dance.songTitle,
-                    songArtist: details.danceSongs?.[0]?.song?.artist || prev.dance.songArtist
-                }
-            };
-        });
-      }
-    } catch (err) { console.error("Fetch Error", err); }
-  };
-
   const addToPlaylist = useCallback((dance: Dance, listName: string) => {
     if (!dance || !listName) return;
     setPlaylists(prev => {
@@ -297,7 +311,6 @@ export default function MasterController() {
     }
   };
 
-  // Auth Handlers
   const handleAuth = async (isLogin: boolean) => {
     try {
       if (isLogin) await signInWithEmailAndPassword(auth, email, password);
@@ -360,7 +373,7 @@ export default function MasterController() {
             )}
 
             {results.map(d => (
-              <div key={d.id} onClick={() => loadDanceDetails(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+              <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 <div>
                   <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
                   <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
@@ -400,7 +413,7 @@ export default function MasterController() {
               playlists[currentView.name].length === 0 ? <div style={{ opacity: 0.5, fontStyle: 'italic' }}>This playlist is empty.</div> :
               playlists[currentView.name].map(d => (
                 <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                  <div onClick={() => loadDanceDetails(d)} style={{ cursor: 'pointer', flex: 1 }}>
+                  <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}>
                     <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div>
                     <div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div>
                   </div>

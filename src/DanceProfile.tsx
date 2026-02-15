@@ -1,6 +1,5 @@
 import { useState } from 'react';
 
-// Define the shape of the data we expect
 export interface Dance {
   id: string;
   title: string;
@@ -24,6 +23,9 @@ interface DanceProfileProps {
 
 export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist, colors }: DanceProfileProps) {
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
+
+  // Safety check: If dance is null/undefined, show error instead of crashing
+  if (!dance) return <div style={{ padding: 20 }}>Error: Dance data missing. <button onClick={onBack}>Go Back</button></div>;
 
   const handleAdd = (name: string) => {
     setActiveBtn(name);
@@ -80,16 +82,17 @@ export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist
         ← Back
       </button>
 
+      {/* CRASH FIX: Added safe accessors (|| '') to prevent lowercase() on null */}
       <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>
-        {dance.title.toLowerCase()}
+        {(dance.title || 'Untitled Dance').toLowerCase()}
       </h1>
       <div style={{ color: colors.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>
-        {dance.difficultyLevel.toLowerCase()} • {dance.counts} counts • {dance.wallCount} walls
+        {(dance.difficultyLevel || 'Unknown').toLowerCase()} • {dance.counts || 0} counts • {dance.wallCount || 0} walls
       </div>
       
       <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}>
-        <p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle}</p>
-        <p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist}</p>
+        <p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle || 'Unknown'}</p>
+        <p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist || 'Unknown'}</p>
       </div>
       
       <div style={{ marginBottom: '30px' }}>

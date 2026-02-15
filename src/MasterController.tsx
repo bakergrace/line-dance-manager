@@ -71,7 +71,7 @@ const db = getFirestore(app);
 const googleProvider = new GoogleAuthProvider();
 
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
-const BASE_URL = 'https://cors-anywhere.herokuapp.com/https://api.bootstepper.com';
+const BASE_URL = 'https://api.bootstepper.com';
 
 const COLORS = {
   BACKGROUND: '#EEEBE8',
@@ -226,7 +226,6 @@ export default function MasterController() {
     } catch (err) { console.error("Fetch Error", err); }
   };
 
-  // --- IMMUTABLE PLAYLIST LOGIC ---
   const addToPlaylist = useCallback((dance: Dance, listName: string) => {
     if (!dance || !listName) return;
     setPlaylists(prev => {
@@ -276,8 +275,30 @@ export default function MasterController() {
 
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
+  // --- HELPER COMPONENT FOR STEPS ---
+  const renderStepSheet = () => {
+    if (!selectedDance?.stepSheetContent || selectedDance.stepSheetContent.length === 0) {
+      return <div style={{ opacity: 0.5 }}>loading full steps...</div>;
+    }
+    return selectedDance.stepSheetContent.map((row, idx) => (
+      <div key={idx} style={{ marginBottom: '6px' }}>
+        {(row?.heading || row?.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '10px' }}>{row.heading || row.title}</div>}
+        {(row?.text || row?.description || row?.instruction) && (
+          <div style={{ display: 'flex' }}>
+            {row?.counts && <span style={{ fontWeight: 'bold', width: '35px', flexShrink: 0 }}>{row.counts}</span>}
+            <span>{row.text || row.description || row.instruction}</span>
+          </div>
+        )}
+        {row?.note && <div style={{ fontStyle: 'italic', fontSize: '0.9em', opacity: 0.8 }}>Note: {row.note}</div>}
+      </div>
+    ));
+  };
+
+  // --- RENDER ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
+      
+      {/* HEADER SECTION */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: '0.3s' }} />
@@ -310,19 +331,7 @@ export default function MasterController() {
             <div style={{ marginTop: '40px', borderTop: `1px solid ${COLORS.PRIMARY}20`, paddingTop: '20px' }}>
               <h3 style={{ fontSize: '1.5rem', marginBottom: '15px' }}>step sheet</h3>
               <div style={{ backgroundColor: '#F9F9F9', padding: '15px', borderRadius: '8px', fontSize: '14px', color: '#333' }}>
-                {selectedDance?.stepSheetContent && selectedDance.stepSheetContent.length > 0 ? (
-                  selectedDance.stepSheetContent.map((row, idx) => (
-                    <div key={idx} style={{ marginBottom: '6px' }}>
-                      {(row?.heading || row?.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '10px' }}>{row.heading || row.title}</div>}
-                      {(row?.text || row?.description || row?.instruction) && (
-                        <div style={{ display: 'flex' }}>
-                          {row?.counts && <span style={{ fontWeight: 'bold', width: '35px', flexShrink: 0 }}>{row.counts}</span>}
-                          <span>{row.text || row.description || row.instruction}</span>
-                        </div>
-                      )}
-                    </div>
-                  ))
-                ) : <div style={{ opacity: 0.5 }}>loading full steps...</div>}
+                {renderStepSheet()}
               </div>
               {selectedDance?.originalStepSheetUrl && (
                  <div style={{ marginTop: '20px', textAlign: 'center' }}>
@@ -353,7 +362,7 @@ export default function MasterController() {
                   <div key={d.id} onClick={() => handleSelectDance(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                     <div>
                       <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div>
-                      <div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
+                      <div style={{ fontSize: '13px', color: COLORS.SECONDARY, fontWeight: 'bold' }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div>
                     </div>
                     <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
                   </div>
@@ -371,10 +380,7 @@ export default function MasterController() {
                     </div>
                     {Object.keys(playlists).map(name => (
                       <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                        <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}>
-                          <h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2>
-                          <span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span>
-                        </div>
+                        <div onClick={() => setViewingPlaylist(name)} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0 }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
                         <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '20px' }}>×</button>
                       </div>
                     ))}

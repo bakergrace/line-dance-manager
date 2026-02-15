@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+// --- TYPE DEFINITION ---
 export interface Dance {
   id: string;
   title: string;

@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 
-// --- FIX: Split the imports into Value (Component) and Type (Interface) ---
+// --- CRITICAL FIX: Split imports into Value vs Type ---
 import DanceProfile from './DanceProfile';
-import type { Dance } from './DanceProfile'; 
+import type { Dance } from './DanceProfile';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -14,8 +14,7 @@ import {
   signOut, 
   onAuthStateChanged
 } from "firebase/auth";
-// FIX: Explicit type import for Firebase User
-import type { User } from "firebase/auth";
+import type { User } from "firebase/auth"; 
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
   getFirestore, 

@@ -1,6 +1,8 @@
-import React, { useState, useEffect, useCallback } from 'react';
-// IMPORT THE NEW COMPONENT
-import DanceProfile, { Dance } from './DanceProfile';
+import { useState, useEffect, useCallback } from 'react';
+
+// FIXED: Split imports to satisfy 'verbatimModuleSyntax'
+import DanceProfile from './DanceProfile';
+import type { Dance } from './DanceProfile';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -10,9 +12,9 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut, 
-  onAuthStateChanged,
-  User 
+  onAuthStateChanged
 } from "firebase/auth";
+import type { User } from "firebase/auth"; 
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
   getFirestore, 
@@ -75,7 +77,6 @@ interface ApiRawItem {
 }
 
 // --- APP STATE TYPES ---
-// This is the "Stack Router" magic. We explicitly define where the user can be.
 type AppView = 
   | { type: 'SEARCH' }
   | { type: 'PLAYLISTS_LIST' }
@@ -95,7 +96,6 @@ const getDifficultyColor = (level: string) => {
 
 export default function MasterController() {
   // --- STATE ---
-  // Replaces "currentTab" with a robust View State object
   const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
   
   const [query, setQuery] = useState('');
@@ -176,19 +176,16 @@ export default function MasterController() {
 
   const handleBack = () => {
     if (currentView.type === 'DANCE_PROFILE') {
-      // Go exactly back to where we came from
       setCurrentView(currentView.previousView);
     } else if (currentView.type === 'PLAYLIST_DETAIL') {
       navigateTo({ type: 'PLAYLISTS_LIST' });
     }
-    // Else: already at top level, do nothing
   };
 
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
     setLoading(true);
     
-    // Save Recent
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
@@ -224,8 +221,6 @@ export default function MasterController() {
   };
 
   const loadDanceDetails = async (basicDance: Dance) => {
-    // Navigate immediately with basic data, then fetch more
-    // We pass 'currentView' as the 'previousView' so we know how to get back
     const newView: AppView = { 
       type: 'DANCE_PROFILE', 
       dance: { ...basicDance }, 
@@ -248,7 +243,6 @@ export default function MasterController() {
         const sheetData = await sheetRes.json();
         const content = Array.isArray(sheetData.content) ? sheetData.content : [];
         
-        // Update the view state with the full data
         setCurrentView(prev => {
             if (prev.type !== 'DANCE_PROFILE' || prev.dance.id !== basicDance.id) return prev;
             return {
@@ -297,7 +291,6 @@ export default function MasterController() {
         delete newState[listName];
         return newState;
       });
-      // If we deleted the playlist we are viewing, go back
       if (currentView.type === 'PLAYLIST_DETAIL' && currentView.name === listName) {
         navigateTo({ type: 'PLAYLISTS_LIST' });
       }
@@ -318,7 +311,6 @@ export default function MasterController() {
 
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
 
-  // --- RENDER ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
       
@@ -327,8 +319,6 @@ export default function MasterController() {
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: '0.3s' }} />
           
-          {/* Main Tabs (Only show if not in a deep dance profile view for clarity, or always show) */}
-          {/* We hide tabs if viewing a dance to force use of "Back" button for stack consistency */}
           {currentView.type !== 'DANCE_PROFILE' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
               <button onClick={() => navigateTo({ type: 'SEARCH' })} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentView.type === 'SEARCH' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>Search</button>
@@ -360,7 +350,6 @@ export default function MasterController() {
               <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>{loading ? '...' : 'Go'}</button>
             </form>
 
-            {/* Recents */}
             {recentSearches.length > 0 && results.length === 0 && (
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                 <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
@@ -370,7 +359,6 @@ export default function MasterController() {
               </div>
             )}
 
-            {/* Results */}
             {results.map(d => (
               <div key={d.id} onClick={() => loadDanceDetails(d)} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 <div>
@@ -408,7 +396,6 @@ export default function MasterController() {
             <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
             <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
             
-            {/* SAFE ACCESS: Check if playlist exists before mapping */}
             {playlists[currentView.name] ? (
               playlists[currentView.name].length === 0 ? <div style={{ opacity: 0.5, fontStyle: 'italic' }}>This playlist is empty.</div> :
               playlists[currentView.name].map(d => (
@@ -438,7 +425,7 @@ export default function MasterController() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                 <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>Sign in with Google</button>
                 <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
-                <form onSubmit={(e) => handleAuth(!isLoginView ? false : true)} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <form onSubmit={() => handleAuth(!isLoginView ? false : true)} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                   <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
                   <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
                   <button type="submit" onClick={(e) => { e.preventDefault(); handleAuth(isLoginView); }} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'Login' : 'Sign Up'}</button>

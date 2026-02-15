@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 
 // Define the shape of the data we expect
 export interface Dance {
@@ -28,7 +28,6 @@ export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist
   const handleAdd = (name: string) => {
     setActiveBtn(name);
     onAddToPlaylist(dance, name);
-    // Visual feedback that resets after 1 second
     setTimeout(() => setActiveBtn(null), 1000);
   };
 
@@ -64,7 +63,6 @@ export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist
 
   return (
     <div style={{ backgroundColor: colors.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-      {/* HEADER / BACK BUTTON */}
       <button 
         onClick={onBack} 
         style={{ 
@@ -82,7 +80,6 @@ export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist
         ← Back
       </button>
 
-      {/* DANCE INFO */}
       <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>
         {dance.title.toLowerCase()}
       </h1>
@@ -95,7 +92,6 @@ export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist
         <p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist}</p>
       </div>
       
-      {/* PLAYLIST ACTIONS */}
       <div style={{ marginBottom: '30px' }}>
         <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -125,7 +121,6 @@ export default function DanceProfile({ dance, playlists, onBack, onAddToPlaylist
         </div>
       </div>
 
-      {/* STEP SHEET */}
       <div style={{ borderTop: `1px solid ${colors.PRIMARY}30`, paddingTop: '20px' }}>
         <h3 style={{ fontSize: '1.4rem', marginBottom: '15px', color: colors.PRIMARY }}>Step Sheet</h3>
         <div style={{ backgroundColor: '#FAFAFA', padding: '20px', borderRadius: '8px', fontSize: '14px', color: '#333', border: '1px solid #EEE' }}>

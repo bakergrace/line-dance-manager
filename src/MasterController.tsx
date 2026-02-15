@@ -10,8 +10,7 @@ import {
   signOut, 
   onAuthStateChanged
 } from "firebase/auth";
-// Type-only import
-import type { User } from "firebase/auth"; 
+import type { User } from "firebase/auth";
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
   getFirestore, 
@@ -56,7 +55,7 @@ const STORAGE_KEYS = {
   RECENT_SEARCHES: 'bootstepper_recent_searches'
 };
 
-// --- INTERFACES ---
+// --- DATA TYPES ---
 export interface Dance {
   id: string;
   title: string;
@@ -86,7 +85,7 @@ interface ApiRawItem {
   }>;
 }
 
-// --- ROUTING TYPES ---
+// --- NAVIGATION TYPES ---
 type ReturnPath = 
   | { type: 'SEARCH' }
   | { type: 'PLAYLIST_DETAIL'; name: string };
@@ -97,6 +96,23 @@ type AppView =
   | { type: 'PLAYLIST_DETAIL'; name: string }
   | { type: 'ACCOUNT' }
   | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
+
+// --- DATA NORMALIZER (THE FIREWALL) ---
+// This ensures that NO MATTER what the API returns, the app gets safe strings.
+const normalizeDanceData = (raw: any): Dance => {
+  return {
+    id: raw.id || 'unknown-id',
+    title: raw.title || 'Untitled Dance',
+    difficultyLevel: raw.difficultyLevel || 'Level Unknown',
+    counts: typeof raw.counts === 'number' ? raw.counts : (raw.count || 0),
+    wallCount: typeof raw.walls === 'number' ? raw.walls : (raw.wallCount || 0),
+    songTitle: raw.songTitle || raw.danceSongs?.[0]?.song?.title || 'Unknown Song',
+    songArtist: raw.songArtist || raw.danceSongs?.[0]?.song?.artist || 'Unknown Artist',
+    stepSheetContent: Array.isArray(raw.stepSheetContent) ? raw.stepSheetContent : [],
+    originalStepSheetUrl: raw.originalStepSheetUrl || '',
+    stepSheetId: raw.stepSheetId || raw.id
+  };
+};
 
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
@@ -132,7 +148,7 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // --- LIFECYCLE ---
+  // --- INITIAL LOAD ---
   useEffect(() => {
     try {
       const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
@@ -142,6 +158,7 @@ export default function MasterController() {
     } catch (e) { console.error("Load Error", e); }
   }, []);
 
+  // --- AUTH SYNC ---
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
@@ -161,6 +178,7 @@ export default function MasterController() {
     return () => unsubscribe();
   }, []);
 
+  // --- DATA SAVE ---
   useEffect(() => {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
@@ -170,6 +188,7 @@ export default function MasterController() {
     }
   }, [playlists, user, isDataLoaded]);
 
+  // --- UI LISTENERS ---
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -181,7 +200,7 @@ export default function MasterController() {
     };
   }, []);
 
-  // --- NAVIGATION ---
+  // --- NAVIGATION (BACK BUTTON FIX) ---
   const navigateTo = (view: AppView) => {
     setCurrentView(view);
     window.scrollTo(0,0);
@@ -204,47 +223,59 @@ export default function MasterController() {
     }
   };
 
-  // --- DATA FETCHING ---
-  const loadDanceDetails = async (basicDance: Dance, source: ReturnPath) => {
-    // 1. Valid Data Check
-    if (!basicDance || !basicDance.id) return;
+  // --- CRITICAL FIX: FETCH-THEN-SHOW LOGIC ---
+  const loadDanceDetails = async (rawDance: any, source: ReturnPath) => {
+    if (!rawDance || !rawDance.id) return;
 
-    setCurrentView({ 
-      type: 'DANCE_PROFILE', 
-      dance: { ...basicDance }, 
-      returnPath: source 
-    });
+    // 1. Show Global Loading Spinner immediately. Do NOT change view yet.
+    setLoading(true);
 
     try {
-      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${basicDance.id}`, {
+      // 2. Fetch all data first
+      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${rawDance.id}`, {
          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
       });
-      const details = await detailsRes.json();
-      const sheetId = details.stepSheetId || basicDance.stepSheetId || basicDance.id;
+      
+      let safeDetails = rawDance; // Fallback to what we have
+      let sheetContent: any[] = [];
 
-      const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+      if (detailsRes.ok) {
+        safeDetails = await detailsRes.json();
+        const sheetId = safeDetails.stepSheetId || rawDance.stepSheetId || rawDance.id;
+        
+        // 3. Fetch steps
+        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
+          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
+        });
+        
+        if (sheetRes.ok) {
+          const sheetData = await sheetRes.json();
+          if (Array.isArray(sheetData.content)) sheetContent = sheetData.content;
+        }
+      }
+
+      // 4. MERGE & NORMALIZE data. This prevents the "blank screen" crash.
+      // We combine the raw dance (from playlist) with the API details.
+      const fullDanceData = normalizeDanceData({
+        ...rawDance,
+        ...safeDetails,
+        stepSheetContent: sheetContent
       });
 
-      if (sheetRes.ok) {
-        const sheetData = await sheetRes.json();
-        const content = Array.isArray(sheetData.content) ? sheetData.content : [];
-        
-        setCurrentView(prev => {
-            if (prev.type !== 'DANCE_PROFILE' || prev.dance.id !== basicDance.id) return prev;
-            return {
-                ...prev,
-                dance: {
-                    ...prev.dance,
-                    stepSheetContent: content,
-                    originalStepSheetUrl: details.originalStepSheetUrl || prev.dance.originalStepSheetUrl,
-                    songTitle: details.danceSongs?.[0]?.song?.title || prev.dance.songTitle,
-                    songArtist: details.danceSongs?.[0]?.song?.artist || prev.dance.songArtist
-                }
-            };
-        });
-      }
-    } catch (err) { console.error("Fetch Error", err); }
+      // 5. Safe to switch view now. Data is guaranteed to be good.
+      setCurrentView({ 
+        type: 'DANCE_PROFILE', 
+        dance: fullDanceData, 
+        returnPath: source 
+      });
+
+    } catch (err) {
+      console.error("Fetch Error", err);
+      alert("Could not load dance details. Please try again.");
+    } finally {
+      // 6. Turn off loader
+      setLoading(false);
+    }
   };
 
   const handleSearch = async (searchQuery: string) => {
@@ -266,17 +297,9 @@ export default function MasterController() {
       
       if (items.length === 0) alert("No results found.");
 
-      setResults(items.map(item => ({
-        id: item.id,
-        title: item.title,
-        difficultyLevel: item.difficultyLevel || "unknown",
-        counts: item.counts ?? item.count ?? 0,
-        wallCount: Number(item.walls ?? item.wallCount ?? 0),
-        originalStepSheetUrl: item.originalStepSheetUrl,
-        stepSheetId: item.stepSheetId,
-        songTitle: item.danceSongs?.[0]?.song?.title || "unknown song",
-        songArtist: item.danceSongs?.[0]?.song?.artist || "unknown artist"
-      })));
+      // Normalize results immediately
+      setResults(items.map(item => normalizeDanceData(item)));
+
     } catch (err) { 
       console.error(err);
       alert("Search failed. Check connection.");
@@ -341,7 +364,7 @@ export default function MasterController() {
   const renderDanceProfile = (dance: Dance) => {
     if (!dance) return <div>Data Missing</div>;
     
-    // Safety Fallbacks
+    // Safety Fallbacks (Redundant but safe)
     const title = (dance.title || 'Untitled').toLowerCase();
     const level = (dance.difficultyLevel || 'unknown').toLowerCase();
     const song = (dance.songTitle || 'Unknown').toLowerCase();
@@ -351,7 +374,7 @@ export default function MasterController() {
       <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
         <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
         <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{title}</h1>
-        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{level} • {dance.counts || 0} counts • {dance.wallCount || 0} walls</div>
+        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{level} • {dance.counts} counts • {dance.wallCount} walls</div>
         <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {song}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {artist}</p></div>
         
         <div style={{ marginBottom: '30px' }}>
@@ -404,71 +427,80 @@ export default function MasterController() {
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-        {currentView.type === 'DANCE_PROFILE' && renderDanceProfile(currentView.dance)}
+        
+        {/* GLOBAL LOADER */}
+        {loading && <div style={{ textAlign: 'center', padding: '20px', fontSize: '1.2rem', color: COLORS.PRIMARY }}>Loading...</div>}
 
-        {currentView.type === 'SEARCH' && (
-          <div>
-            <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
-              <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>{loading ? '...' : 'Go'}</button>
-            </form>
-            {recentSearches.length > 0 && results.length === 0 && (
-              <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
-                {recentSearches.map(s => <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
-              </div>
-            )}
-            {results.map(d => (
-              <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()} — {d.songArtist.toLowerCase()}</div></div>
-                <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
-              </div>
-            ))}
-          </div>
-        )}
+        {/* VIEWS (Hidden while loading to prevent flicker) */}
+        {!loading && (
+          <>
+            {currentView.type === 'DANCE_PROFILE' && renderDanceProfile(currentView.dance)}
 
-        {currentView.type === 'PLAYLISTS_LIST' && (
-          <div>
-            <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button></div>
-            {Object.keys(playlists).map(name => (
-              <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
-                <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px' }}>×</button>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {currentView.type === 'PLAYLIST_DETAIL' && (
-          <div>
-            <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
-            <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
-            {playlists[currentView.name] ? playlists[currentView.name].map(d => (
-              <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div></div>
-                <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
-              </div>
-            )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
-          </div>
-        )}
-
-        {currentView.type === 'ACCOUNT' && (
-          <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-            {user ? (
-              <div style={{ textAlign: 'center' }}><p>Signed in as: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button></div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>Sign in with Google</button>
-                <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
-                <form onSubmit={() => handleAuth(!isLoginView ? false : true)} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                  <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
-                  <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
-                  <button type="submit" onClick={(e) => { e.preventDefault(); handleAuth(isLoginView); }} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'Login' : 'Sign Up'}</button>
+            {currentView.type === 'SEARCH' && (
+              <div>
+                <form onSubmit={(e) => { e.preventDefault(); handleSearch(query); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                  <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
+                  <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>Go</button>
                 </form>
-                <div onClick={() => setIsLoginView(!isLoginView)} style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY }}>{isLoginView ? 'Need an account? Sign up' : 'Have an account? Log in'}</div>
+                {recentSearches.length > 0 && results.length === 0 && (
+                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
+                    {recentSearches.map(s => <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
+                  </div>
+                )}
+                {results.map(d => (
+                  <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
+                  </div>
+                ))}
               </div>
             )}
-          </div>
+
+            {currentView.type === 'PLAYLISTS_LIST' && (
+              <div>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button></div>
+                {Object.keys(playlists).map(name => (
+                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
+                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px' }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {currentView.type === 'PLAYLIST_DETAIL' && (
+              <div>
+                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
+                <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
+                {playlists[currentView.name] ? playlists[currentView.name].map(d => (
+                  <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
+                    <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
+                  </div>
+                )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
+              </div>
+            )}
+
+            {currentView.type === 'ACCOUNT' && (
+              <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                {user ? (
+                  <div style={{ textAlign: 'center' }}><p>Signed in as: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button></div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                    <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>Sign in with Google</button>
+                    <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
+                    <form onSubmit={() => handleAuth(!isLoginView ? false : true)} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                      <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
+                      <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
+                      <button type="submit" onClick={(e) => { e.preventDefault(); handleAuth(isLoginView); }} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'Login' : 'Sign Up'}</button>
+                    </form>
+                    <div onClick={() => setIsLoginView(!isLoginView)} style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY }}>{isLoginView ? 'Need an account? Sign up' : 'Have an account? Log in'}</div>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

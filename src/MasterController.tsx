@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -23,15 +23,15 @@ import {
 import bootstepperLogo from './bootstepper-logo.png';
 import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 
-// --- CONFIGURATION ---
+// --- SECURE CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: "AIzaSyDJKpgrqvKlzcaIf32meAvtMraF01As4o0",
-  authDomain: "bootstepper-a5fb5.firebaseapp.com",
-  projectId: "bootstepper-a5fb5",
-  storageBucket: "bootstepper-a5fb5.firebasestorage.app",
-  messagingSenderId: "602764031635",
-  appId: "1:602764031635:web:169206d1a0b72bf209ff66",
-  measurementId: "G-WV254NV2C7"
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
+  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string
 };
 
 const app = initializeApp(firebaseConfig);
@@ -189,7 +189,6 @@ export default function MasterController() {
   }, []);
 
   // --- EXPLICIT CLOUD SYNC FUNCTIONS ---
-  
   const pullFromCloud = async (currentUser: User | null = user) => {
     if (!currentUser) return;
     setSyncMessage("Loading from cloud...");
@@ -212,7 +211,6 @@ export default function MasterController() {
     } catch (error: any) {
       console.error(error);
       setSyncMessage(`Download Failed: ${error.message}`);
-      alert(`Database Read Error: ${error.message}`);
     }
     setTimeout(() => setSyncMessage(null), 3000);
   };
@@ -226,17 +224,16 @@ export default function MasterController() {
     } catch (error: any) {
       console.error(error);
       setSyncMessage(`Upload Failed: ${error.message}`);
-      alert(`Database Write Error: ${error.message}`);
     }
     setTimeout(() => setSyncMessage(null), 3000);
   };
 
-  // --- 2. AUTH LISTENER (Triggers Pull) ---
+  // --- 2. AUTH LISTENER ---
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        pullFromCloud(currentUser); // Fetch when they log in
+        pullFromCloud(currentUser);
       }
     });
     return () => unsubscribeAuth();
@@ -256,7 +253,7 @@ export default function MasterController() {
     setPlaylists(newState); 
     localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(newState));
     if (user) {
-      pushToCloud(newState, user); // Push explicitly to cloud when user modifies data
+      pushToCloud(newState, user);
     }
   };
 
@@ -421,9 +418,9 @@ export default function MasterController() {
     return (
       <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
         <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
-        <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{dance.title}</h1>
-        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{dance.difficultyLevel} • {dance.counts} counts • {dance.wallCount} walls</div>
-        <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist}</p></div>
+        <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{dance.title.toLowerCase()}</h1>
+        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{dance.difficultyLevel.toLowerCase()} • {dance.counts} counts • {dance.wallCount} walls</div>
+        <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle.toLowerCase()}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist.toLowerCase()}</p></div>
         <div style={{ marginBottom: '30px' }}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -562,7 +559,6 @@ export default function MasterController() {
                   <div style={{ textAlign: 'center' }}>
                     <p>Signed in as: <b>{user.email}</b></p>
                     
-                    {/* NEW: Explicit Sync Controls */}
                     <div style={{ margin: '20px 0', padding: '15px', backgroundColor: '#F5F5F7', borderRadius: '8px' }}>
                       <p style={{ fontWeight: 'bold', marginBottom: '15px' }}>Data Synchronization</p>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>

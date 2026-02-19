@@ -96,7 +96,6 @@ const getDifficultyColor = (level: string) => {
   return COLORS.NEUTRAL; 
 };
 
-// --- COMPONENTS OUTSIDE CONTROLLER ---
 const DifficultyLegend = () => (
   <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', padding: '15px', backgroundColor: COLORS.BACKGROUND, borderTop: `1px solid ${COLORS.PRIMARY}20`, flexWrap: 'wrap', fontSize: '11px', color: '#666' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00BCD4' }} /> Absolute</div>
@@ -138,6 +137,9 @@ export default function MasterController() {
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+  
+  // NEW: Toggle for Edit Mode vs Read Mode
+  const [isEditingProfile, setIsEditingProfile] = useState(false);
 
   useEffect(() => {
     if (showSplash) {
@@ -176,10 +178,16 @@ export default function MasterController() {
         }
         if (data.profile) {
             setProfile(data.profile);
+            // If they have a username, default to read-only mode
+            if (data.profile.username) setIsEditingProfile(false);
+        } else {
+            // Force them into edit mode if no profile exists
+            setIsEditingProfile(true); 
         }
         setSyncMessage("Successfully downloaded data!");
       } else {
         setSyncMessage("No cloud data found. Saving local data to cloud.");
+        setIsEditingProfile(true);
         await pushToCloud(playlists, profile, currentUser);
       }
     } catch (error: any) {
@@ -252,6 +260,7 @@ export default function MasterController() {
         }
         await pushToCloud(playlists, { ...profile, username: usernameLower }, user);
         setProfileMessage("Profile updated successfully!");
+        setIsEditingProfile(false); // Return to view mode after save
     } catch (e: any) {
         setProfileMessage(`Error saving profile: ${e.message}`);
     }
@@ -391,6 +400,17 @@ export default function MasterController() {
 
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
+      {/* RESTORED SPLASH CSS GLOBALLY */}
+      <style>{`
+        @keyframes swoopIn { 0% { transform: scale(0.1) translateY(100px); opacity: 0; } 60% { transform: scale(1.05) translateY(0); opacity: 1; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
+      `}</style>
+      
+      {showSplash && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: COLORS.BACKGROUND, display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="Bootstepper Splash" style={{ width: '100%', maxWidth: isMobile ? '300px' : '500px', height: 'auto', margin: '0 auto', animation: 'swoopIn 2.5s ease-out forwards' }} />
+        </div>
+      )}
+
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: isMobile ? '120px' : '180px', width: 'auto', margin: '0 auto', display: 'block' }} />
@@ -407,7 +427,7 @@ export default function MasterController() {
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
         {loading && <div style={{ textAlign: 'center', padding: '40px', fontSize: '1.2rem', color: COLORS.PRIMARY, fontWeight: 'bold' }}>Loading...</div>}
 
-        {!loading && (
+        {!loading && !showSplash && (
           <>
             {currentView.type === 'DANCE_PROFILE' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
@@ -457,7 +477,6 @@ export default function MasterController() {
                   </div>
                 )}
                 
-                {/* RESTORED: Filter Component */}
                 {results.length > 0 && <FilterComponent />}
                 
                 {paginatedList.map(d => (
@@ -493,7 +512,6 @@ export default function MasterController() {
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
                 <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
                 
-                {/* RESTORED: Filter Component */}
                 {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
                 
                 {playlists[currentView.name] ? paginatedList.map(d => (
@@ -519,14 +537,49 @@ export default function MasterController() {
                   <div>
                     {/* SOCIAL PROFILE SECTION */}
                     <div style={{ borderBottom: `2px solid ${COLORS.PRIMARY}20`, paddingBottom: '20px', marginBottom: '20px' }}>
-                        <h2 style={{ color: COLORS.PRIMARY, marginBottom: '15px' }}>Your Profile</h2>
                         
+                        {/* --- READ ONLY VIEW --- */}
+                        {!isEditingProfile ? (
+                            <div style={{ textAlign: 'center' }}>
+                                {profile.photoUrl ? (
+                                    <img src={profile.photoUrl} alt="Profile" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }} />
+                                ) : (
+                                    <div style={{ width: '120px', height: '120px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, fontSize: '40px', color: '#999' }}>👤</div>
+                                )}
+                                
+                                {(profile.firstName || profile.lastName) && (
+                                    <h2 style={{ color: '#333', marginTop: '15px', marginBottom: '5px' }}>{profile.firstName} {profile.lastName}</h2>
+                                )}
+                                
+                                <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (profile.firstName || profile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{profile.username}</p>
+                                
+                                {profile.bio && (
+                                    <p style={{ color: '#555', fontSize: '14px', maxWidth: '400px', margin: '0 auto 15px auto', fontStyle: 'italic' }}>"{profile.bio}"</p>
+                                )}
+                                
+                                {profile.location && (
+                                    <p style={{ color: COLORS.NEUTRAL, fontSize: '13px', marginBottom: '20px' }}>📍 {profile.location}</p>
+                                )}
+
+                                <button onClick={() => setIsEditingProfile(true)} style={{ backgroundColor: COLORS.WHITE, color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '8px 20px', borderRadius: '20px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
+                                    Edit Account
+                                </button>
+                            </div>
+                        ) : (
+                        
+                        /* --- EDIT FORM VIEW --- */
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <h3 style={{ margin: 0, color: COLORS.PRIMARY }}>Edit Profile</h3>
+                                {profile.username && (
+                                    <button onClick={() => { setIsEditingProfile(false); setUsernameStatus('idle'); }} style={{ background: 'none', border: 'none', color: COLORS.NEUTRAL, textDecoration: 'underline', cursor: 'pointer' }}>Cancel</button>
+                                )}
+                            </div>
+
                             {profile.photoUrl && (
                                 <img src={profile.photoUrl} alt="Profile" style={{ width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', margin: '0 auto', border: `2px solid ${COLORS.SECONDARY}` }} />
                             )}
                             
-                            {/* NATIVE FILE UPLOAD */}
                             <div style={{ textAlign: 'center' }}>
                                 <input 
                                     type="file" 
@@ -562,7 +615,8 @@ export default function MasterController() {
                                         type="text" 
                                         value={profile.username} 
                                         onChange={e => {
-                                            const val = e.target.value.replace(/[^a-zA-Z0-9_]/g, ''); 
+                                            // ALLOWS letters, numbers, dot, dash, and underscore
+                                            const val = e.target.value.replace(/[^a-zA-Z0-9.\-_]/g, ''); 
                                             setProfile({...profile, username: val});
                                             checkUsername(val);
                                         }} 
@@ -601,6 +655,7 @@ export default function MasterController() {
                             </button>
                             {profileMessage && <div style={{ textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: profileMessage.includes('Error') || profileMessage.includes('failed') ? COLORS.ERROR : COLORS.SUCCESS }}>{profileMessage}</div>}
                         </div>
+                        )}
                     </div>
 
                     <div style={{ textAlign: 'center' }}>

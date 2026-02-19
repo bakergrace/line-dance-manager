@@ -1,5 +1,11 @@
 import { useState, useEffect, useCallback } from 'react';
 
+// --- MEDIA IMPORTS ---
+import bootstepperLogo from './bootstepper-logo.png';
+import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
+// NEW: Import the audio file
+import strumAudio from './strum.mp3';
+
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
@@ -18,10 +24,6 @@ import {
   setDoc, 
   getDoc 
 } from "firebase/firestore";
-
-// --- IMAGES ---
-import bootstepperLogo from './bootstepper-logo.png';
-import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 
 // --- CONFIGURATION ---
 const firebaseConfig = {
@@ -130,7 +132,6 @@ const getDifficultyColor = (level: string) => {
   return COLORS.NEUTRAL; 
 };
 
-// Component: Color Legend
 const DifficultyLegend = () => (
   <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', padding: '15px', backgroundColor: COLORS.BACKGROUND, borderTop: `1px solid ${COLORS.PRIMARY}20`, flexWrap: 'wrap', fontSize: '11px', color: '#666' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00BCD4' }} /> Absolute</div>
@@ -143,6 +144,9 @@ const DifficultyLegend = () => (
 
 // --- MAIN CONTROLLER ---
 export default function MasterController() {
+  // NEW: Splash screen state
+  const [showSplash, setShowSplash] = useState(true);
+
   const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
@@ -167,6 +171,25 @@ export default function MasterController() {
       "dances i kinda know": [],
       "dances i want to know": []
   });
+
+  // --- SPLASH SCREEN EFFECT ---
+  useEffect(() => {
+    if (showSplash) {
+      // 1. Play Audio simultaneously with mount
+      const audio = new Audio(strumAudio);
+      audio.play().catch(err => {
+        // This catches the error silently if the browser blocks autoplay
+        console.warn("Browser autoplay policy prevented audio:", err);
+      });
+
+      // 2. Set timer to dismiss splash screen (2.5 seconds matches animation duration)
+      const timer = setTimeout(() => {
+        setShowSplash(false);
+      }, 2500);
+
+      return () => clearTimeout(timer);
+    }
+  }, [showSplash]);
 
   // --- DATA LOADING & CLEANING ---
   useEffect(() => {
@@ -325,7 +348,6 @@ export default function MasterController() {
     if (!dance || !listName) return;
     setActiveBtn(listName);
     
-    // SAFE STATE UPDATE
     setPlaylists(prev => {
       const currentList = prev[listName] || [];
       if (currentList.some(item => item.id === dance.id)) return prev;
@@ -391,7 +413,6 @@ export default function MasterController() {
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
             {Object.keys(playlists).map(name => {
-              // --- CRITICAL FIX: Safe access for .some() ---
               const isAdded = (playlists[name] || []).some(d => d.id === dance.id);
               return (
                 <button key={name} onClick={() => addToPlaylist(dance, name)} disabled={isAdded} style={{ flex: '1 1 auto', backgroundColor: isAdded ? '#81C784' : (activeBtn === name ? COLORS.SECONDARY : COLORS.PRIMARY), color: COLORS.WHITE, border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '600', cursor: isAdded ? 'default' : 'pointer' }}>{isAdded ? '✓ Added' : name}</button>
@@ -420,6 +441,37 @@ export default function MasterController() {
   };
 
   // --- RENDER ---
+  
+  // NEW: RENDER SPLASH SCREEN IF ACTIVE
+  if (showSplash) {
+    return (
+      <div style={{ 
+        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+        backgroundColor: COLORS.BACKGROUND, 
+        display: 'flex', justifyContent: 'center', alignItems: 'center', 
+        zIndex: 9999 
+      }}>
+        <img 
+          src={isMobile ? bootstepperMobileLogo : bootstepperLogo} 
+          alt="Bootstepper Splash" 
+          style={{
+            width: isMobile ? '80%' : '50%',
+            // The swoop in animation
+            animation: 'swoopIn 2.5s ease-out forwards'
+          }} 
+        />
+        <style>{`
+          @keyframes swoopIn {
+            0% { transform: scale(0.1) translateY(100px); opacity: 0; }
+            60% { transform: scale(1.05) translateY(0); opacity: 1; }
+            100% { transform: scale(1) translateY(0); opacity: 1; }
+          }
+        `}</style>
+      </div>
+    );
+  }
+
+  // --- MAIN APP RENDER ---
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentResults = results.slice(indexOfFirstItem, indexOfLastItem);

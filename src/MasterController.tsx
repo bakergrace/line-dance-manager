@@ -1,11 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 
-// --- MEDIA IMPORTS ---
-import bootstepperLogo from './bootstepper-logo.png';
-import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
-// NEW: Import the audio file
-import strumAudio from './strum.mp3';
-
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
 import { 
@@ -24,6 +18,10 @@ import {
   setDoc, 
   getDoc 
 } from "firebase/firestore";
+
+// --- IMAGES ---
+import bootstepperLogo from './bootstepper-logo.png';
+import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 
 // --- CONFIGURATION ---
 const firebaseConfig = {
@@ -132,6 +130,7 @@ const getDifficultyColor = (level: string) => {
   return COLORS.NEUTRAL; 
 };
 
+// Component: Color Legend
 const DifficultyLegend = () => (
   <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', padding: '15px', backgroundColor: COLORS.BACKGROUND, borderTop: `1px solid ${COLORS.PRIMARY}20`, flexWrap: 'wrap', fontSize: '11px', color: '#666' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00BCD4' }} /> Absolute</div>
@@ -144,9 +143,7 @@ const DifficultyLegend = () => (
 
 // --- MAIN CONTROLLER ---
 export default function MasterController() {
-  // NEW: Splash screen state
   const [showSplash, setShowSplash] = useState(true);
-
   const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
@@ -172,21 +169,12 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // --- SPLASH SCREEN EFFECT ---
+  // --- SPLASH SCREEN EFFECT (Audio removed) ---
   useEffect(() => {
     if (showSplash) {
-      // 1. Play Audio simultaneously with mount
-      const audio = new Audio(strumAudio);
-      audio.play().catch(err => {
-        // This catches the error silently if the browser blocks autoplay
-        console.warn("Browser autoplay policy prevented audio:", err);
-      });
-
-      // 2. Set timer to dismiss splash screen (2.5 seconds matches animation duration)
       const timer = setTimeout(() => {
         setShowSplash(false);
       }, 2500);
-
       return () => clearTimeout(timer);
     }
   }, [showSplash]);
@@ -396,7 +384,8 @@ export default function MasterController() {
     catch (err: any) { alert(err.message); }
   };
 
-  const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '360px');
+  // FIX: Fixed the massive 360px desktop logo to a clean 180px
+  const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '180px');
 
   // --- RENDER HELPERS ---
   const renderDanceProfile = (dance: Dance) => {
@@ -442,7 +431,7 @@ export default function MasterController() {
 
   // --- RENDER ---
   
-  // NEW: RENDER SPLASH SCREEN IF ACTIVE
+  // RENDER SPLASH SCREEN
   if (showSplash) {
     return (
       <div style={{ 
@@ -451,12 +440,15 @@ export default function MasterController() {
         display: 'flex', justifyContent: 'center', alignItems: 'center', 
         zIndex: 9999 
       }}>
+        {/* FIX: Centered strictly with auto margins and clamped width for desktop */}
         <img 
           src={isMobile ? bootstepperMobileLogo : bootstepperLogo} 
           alt="Bootstepper Splash" 
           style={{
-            width: isMobile ? '80%' : '50%',
-            // The swoop in animation
+            width: '100%',
+            maxWidth: isMobile ? '300px' : '500px',
+            height: 'auto',
+            margin: '0 auto',
             animation: 'swoopIn 2.5s ease-out forwards'
           }} 
         />
@@ -481,9 +473,10 @@ export default function MasterController() {
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
       
       {/* HEADER */}
-      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
+      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none', transition: 'padding 0.3s ease' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
-          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: '0.3s' }} />
+          {/* FIX: Smooth max-height transition to prevent scroll glitching */}
+          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: 'max-height 0.3s ease-in-out' }} />
           {currentView.type !== 'DANCE_PROFILE' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
               <button onClick={() => navigateTo({ type: 'SEARCH' })} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentView.type === 'SEARCH' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>Search</button>

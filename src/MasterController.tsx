@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -16,8 +16,8 @@ import {
   getFirestore, 
   doc, 
   setDoc, 
-  onSnapshot 
-} from "firebase/firestore"; // FIX: Imported onSnapshot for Real-Time Sync
+  getDoc 
+} from "firebase/firestore"; 
 
 // --- IMAGES ---
 import bootstepperLogo from './bootstepper-logo.png';
@@ -47,7 +47,8 @@ const COLORS = {
   PRIMARY: '#36649A',
   SECONDARY: '#D99AB1',
   WHITE: '#FFFFFF',
-  NEUTRAL: '#9E9E9E'  
+  NEUTRAL: '#9E9E9E',
+  SUCCESS: '#4CAF50'
 };
 
 const STORAGE_KEYS = {
@@ -159,8 +160,10 @@ export default function MasterController() {
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
 
-  const [newPlaylistName, setNewPlaylistName] = useState('');
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(DEFAULT_PLAYLISTS);
+  const [newPlaylistName, setNewPlaylistName] = useState('');
 
   // --- SPLASH SCREEN ---
   useEffect(() => {
@@ -185,39 +188,58 @@ export default function MasterController() {
     } catch (e) { console.error("Load Error", e); }
   }, []);
 
-  // --- 2. REAL-TIME CLOUD SYNC (The Fix for Syncing) ---
-  useEffect(() => {
-    let unsubSnapshot: (() => void) | null = null;
+  // --- EXPLICIT CLOUD SYNC FUNCTIONS ---
+  
+  const pullFromCloud = async (currentUser: User | null = user) => {
+    if (!currentUser) return;
+    setSyncMessage("Loading from cloud...");
+    try {
+      const docRef = doc(db, "users", currentUser.uid);
+      const docSnap = await getDoc(docRef);
+      if (docSnap.exists()) {
+        const data = docSnap.data();
+        const cleaned: any = {};
+        Object.keys(data).forEach(key => { 
+          cleaned[key] = (data[key] || []).map((d: any) => normalizeDanceData(d)); 
+        });
+        setPlaylists(cleaned);
+        localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(cleaned));
+        setSyncMessage("Successfully downloaded data!");
+      } else {
+        setSyncMessage("No cloud data found. Saving local data to cloud.");
+        await pushToCloud(playlists, currentUser);
+      }
+    } catch (error: any) {
+      console.error(error);
+      setSyncMessage(`Download Failed: ${error.message}`);
+      alert(`Database Read Error: ${error.message}`);
+    }
+    setTimeout(() => setSyncMessage(null), 3000);
+  };
 
+  const pushToCloud = async (dataToSave: any, currentUser: User | null = user) => {
+    if (!currentUser) return;
+    setSyncMessage("Saving to cloud...");
+    try {
+      await setDoc(doc(db, "users", currentUser.uid), dataToSave);
+      setSyncMessage("Successfully saved to cloud!");
+    } catch (error: any) {
+      console.error(error);
+      setSyncMessage(`Upload Failed: ${error.message}`);
+      alert(`Database Write Error: ${error.message}`);
+    }
+    setTimeout(() => setSyncMessage(null), 3000);
+  };
+
+  // --- 2. AUTH LISTENER (Triggers Pull) ---
+  useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        const docRef = doc(db, "users", currentUser.uid);
-        
-        // Listen to Firebase constantly for changes across devices
-        unsubSnapshot = onSnapshot(docRef, (docSnap) => {
-          if (docSnap.exists()) {
-            const data = docSnap.data();
-            const cleaned: any = {};
-            Object.keys(data).forEach(key => { 
-              cleaned[key] = (data[key] || []).map((d: any) => normalizeDanceData(d)); 
-            });
-            setPlaylists(cleaned);
-            localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(cleaned));
-          } else {
-            // New user: Create their cloud document
-            setDoc(docRef, DEFAULT_PLAYLISTS).catch(console.error);
-          }
-        });
-      } else {
-        if (unsubSnapshot) unsubSnapshot();
+        pullFromCloud(currentUser); // Fetch when they log in
       }
     });
-
-    return () => {
-      unsubscribeAuth();
-      if (unsubSnapshot) unsubSnapshot();
-    };
+    return () => unsubscribeAuth();
   }, []);
 
   // --- UI RESIZE LISTENER ---
@@ -230,12 +252,11 @@ export default function MasterController() {
   }, []);
 
   // --- 3. ACTION-BASED SAVING ENGINE ---
-  // We only write to Firebase when you physically click a button, preventing infinite loops.
-  const updateAndSavePlaylists = async (newState: { [key: string]: Dance[] }) => {
-    setPlaylists(newState); // Update screen immediately
-    localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(newState)); // Save locally
+  const updateAndSavePlaylists = (newState: { [key: string]: Dance[] }) => {
+    setPlaylists(newState); 
+    localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(newState));
     if (user) {
-      await setDoc(doc(db, "users", user.uid), newState).catch(console.error); // Save to cloud instantly
+      pushToCloud(newState, user); // Push explicitly to cloud when user modifies data
     }
   };
 
@@ -248,15 +269,11 @@ export default function MasterController() {
       const newState = { ...playlists, [listName]: [...currentList, normalizeDanceData(dance)] };
       updateAndSavePlaylists(newState);
     }
-    
     setTimeout(() => setActiveBtn(null), 1000);
   };
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
-    const newState = { 
-      ...playlists, 
-      [listName]: (playlists[listName] || []).filter(d => d.id !== danceId) 
-    };
+    const newState = { ...playlists, [listName]: (playlists[listName] || []).filter(d => d.id !== danceId) };
     updateAndSavePlaylists(newState);
   };
 
@@ -275,7 +292,6 @@ export default function MasterController() {
       const newState = { ...playlists };
       delete newState[listName];
       updateAndSavePlaylists(newState);
-      
       if (currentView.type === 'PLAYLIST_DETAIL' && currentView.name === listName) {
         navigateTo({ type: 'PLAYLISTS_LIST' });
       }
@@ -458,9 +474,8 @@ export default function MasterController() {
 
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
-      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none', transition: 'box-shadow 0.3s ease' }}>
+      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
-          {/* FIX FOR SHAKING: Removed dynamic resizing. Height is strictly driven by device type. */}
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: isMobile ? '120px' : '180px', width: 'auto', margin: '0 auto', display: 'block' }} />
           {currentView.type !== 'DANCE_PROFILE' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
@@ -544,7 +559,21 @@ export default function MasterController() {
             {currentView.type === 'ACCOUNT' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 {user ? (
-                  <div style={{ textAlign: 'center' }}><p>Signed in as: <b>{user.email}</b></p><button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button></div>
+                  <div style={{ textAlign: 'center' }}>
+                    <p>Signed in as: <b>{user.email}</b></p>
+                    
+                    {/* NEW: Explicit Sync Controls */}
+                    <div style={{ margin: '20px 0', padding: '15px', backgroundColor: '#F5F5F7', borderRadius: '8px' }}>
+                      <p style={{ fontWeight: 'bold', marginBottom: '15px' }}>Data Synchronization</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        <button onClick={() => pullFromCloud()} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>⬇️ Force Download from Cloud</button>
+                        <button onClick={() => pushToCloud(playlists)} style={{ backgroundColor: COLORS.WHITE, color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer' }}>⬆️ Force Upload to Cloud</button>
+                      </div>
+                      {syncMessage && <p style={{ color: syncMessage.includes('Fail') || syncMessage.includes('Error') ? 'red' : COLORS.SUCCESS, fontWeight: 'bold', marginTop: '10px', fontSize: '13px' }}>{syncMessage}</p>}
+                    </div>
+
+                    <button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button>
+                  </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                     <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>Sign in with Google</button>

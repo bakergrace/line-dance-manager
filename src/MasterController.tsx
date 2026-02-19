@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 
 // --- FIREBASE IMPORTS ---
 import { initializeApp } from "firebase/app";
@@ -16,8 +16,8 @@ import {
   getFirestore, 
   doc, 
   setDoc, 
-  getDoc 
-} from "firebase/firestore";
+  onSnapshot 
+} from "firebase/firestore"; // FIX: Imported onSnapshot for Real-Time Sync
 
 // --- IMAGES ---
 import bootstepperLogo from './bootstepper-logo.png';
@@ -55,6 +55,12 @@ const STORAGE_KEYS = {
   RECENT_SEARCHES: 'bootstepper_recent_searches'
 };
 
+const DEFAULT_PLAYLISTS = {
+  "dances i know": [],
+  "dances i kinda know": [],
+  "dances i want to know": []
+};
+
 // --- INTERFACES ---
 export interface Dance {
   id: string;
@@ -85,16 +91,8 @@ interface ApiRawItem {
   }>;
 }
 
-type ReturnPath = 
-  | { type: 'SEARCH' }
-  | { type: 'PLAYLIST_DETAIL'; name: string };
-
-type AppView = 
-  | { type: 'SEARCH' }
-  | { type: 'PLAYLISTS_LIST' }
-  | { type: 'PLAYLIST_DETAIL'; name: string }
-  | { type: 'ACCOUNT' }
-  | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
+type ReturnPath = { type: 'SEARCH' } | { type: 'PLAYLIST_DETAIL'; name: string };
+type AppView = { type: 'SEARCH' } | { type: 'PLAYLISTS_LIST' } | { type: 'PLAYLIST_DETAIL'; name: string } | { type: 'ACCOUNT' } | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
 
 // --- DATA SANITIZERS ---
 const cleanTitle = (title: string | undefined) => {
@@ -146,7 +144,6 @@ export default function MasterController() {
   const [results, setResults] = useState<Dance[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
   
-  // Pagination & Filters
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
   const [filterDiff, setFilterDiff] = useState('all');
@@ -162,18 +159,10 @@ export default function MasterController() {
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
 
-  // CRITICAL SYNC FLAGS
-  const [isDataLoaded, setIsDataLoaded] = useState(false);
-  const [hasCheckedCloud, setHasCheckedCloud] = useState(false);
-
   const [newPlaylistName, setNewPlaylistName] = useState('');
-  const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>({
-      "dances i know": [],
-      "dances i kinda know": [],
-      "dances i want to know": []
-  });
+  const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(DEFAULT_PLAYLISTS);
 
-  // --- 1. SPLASH SCREEN EFFECT ---
+  // --- SPLASH SCREEN ---
   useEffect(() => {
     if (showSplash) {
       const timer = setTimeout(() => setShowSplash(false), 2500);
@@ -181,16 +170,14 @@ export default function MasterController() {
     }
   }, [showSplash]);
 
-  // --- 2. LOCAL LOAD (Fires Immediately) ---
+  // --- 1. LOCAL LOAD ON MOUNT ---
   useEffect(() => {
     try {
       const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
       if (localPlaylists) {
         const parsed = JSON.parse(localPlaylists);
         const cleaned: any = {};
-        Object.keys(parsed).forEach(key => { 
-          cleaned[key] = parsed[key].map((d: any) => normalizeDanceData(d)); 
-        });
+        Object.keys(parsed).forEach(key => { cleaned[key] = parsed[key].map((d: any) => normalizeDanceData(d)); });
         setPlaylists(cleaned);
       }
       const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
@@ -198,48 +185,42 @@ export default function MasterController() {
     } catch (e) { console.error("Load Error", e); }
   }, []);
 
-  // --- 3. CLOUD CHECK (Prevents Wipe) ---
-  
+  // --- 2. REAL-TIME CLOUD SYNC (The Fix for Syncing) ---
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    let unsubSnapshot: (() => void) | null = null;
+
+    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        try {
-          const docRef = doc(db, "users", currentUser.uid);
-          const docSnap = await getDoc(docRef);
-          
+        const docRef = doc(db, "users", currentUser.uid);
+        
+        // Listen to Firebase constantly for changes across devices
+        unsubSnapshot = onSnapshot(docRef, (docSnap) => {
           if (docSnap.exists()) {
-            // Cloud has data! Pull it down and overwrite the local empty state.
             const data = docSnap.data();
             const cleaned: any = {};
             Object.keys(data).forEach(key => { 
               cleaned[key] = (data[key] || []).map((d: any) => normalizeDanceData(d)); 
             });
             setPlaylists(cleaned);
+            localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(cleaned));
           } else {
-            // Only if the user is truly brand new do we set their cloud doc to empty.
-            await setDoc(docRef, playlists);
+            // New user: Create their cloud document
+            setDoc(docRef, DEFAULT_PLAYLISTS).catch(console.error);
           }
-        } catch (error) { console.error("Sync Error", error); }
+        });
+      } else {
+        if (unsubSnapshot) unsubSnapshot();
       }
-      // CRITICAL: We only allow saving AFTER this check is complete.
-      setHasCheckedCloud(true);
-      setIsDataLoaded(true);
     });
-    return () => unsubscribe();
+
+    return () => {
+      unsubscribeAuth();
+      if (unsubSnapshot) unsubSnapshot();
+    };
   }, []);
 
-  // --- 4. SAFE SAVE (Triggered on data change) ---
-  useEffect(() => {
-    if (isDataLoaded && hasCheckedCloud) {
-      localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-      if (user) {
-        setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
-      }
-    }
-  }, [playlists, user, isDataLoaded, hasCheckedCloud]);
-
-  // --- UI LISTENERS ---
+  // --- UI RESIZE LISTENER ---
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -247,6 +228,59 @@ export default function MasterController() {
     window.addEventListener('resize', handleResize);
     return () => { window.removeEventListener('scroll', handleScroll); window.removeEventListener('resize', handleResize); };
   }, []);
+
+  // --- 3. ACTION-BASED SAVING ENGINE ---
+  // We only write to Firebase when you physically click a button, preventing infinite loops.
+  const updateAndSavePlaylists = async (newState: { [key: string]: Dance[] }) => {
+    setPlaylists(newState); // Update screen immediately
+    localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(newState)); // Save locally
+    if (user) {
+      await setDoc(doc(db, "users", user.uid), newState).catch(console.error); // Save to cloud instantly
+    }
+  };
+
+  const addToPlaylist = (dance: Dance, listName: string) => {
+    if (!dance || !listName) return;
+    setActiveBtn(listName);
+    
+    const currentList = playlists[listName] || [];
+    if (!currentList.some(item => item.id === dance.id)) {
+      const newState = { ...playlists, [listName]: [...currentList, normalizeDanceData(dance)] };
+      updateAndSavePlaylists(newState);
+    }
+    
+    setTimeout(() => setActiveBtn(null), 1000);
+  };
+
+  const removeFromPlaylist = (danceId: string, listName: string) => {
+    const newState = { 
+      ...playlists, 
+      [listName]: (playlists[listName] || []).filter(d => d.id !== danceId) 
+    };
+    updateAndSavePlaylists(newState);
+  };
+
+  const createPlaylist = () => {
+    if (!newPlaylistName.trim()) return;
+    const name = newPlaylistName.trim().toLowerCase();
+    if (playlists[name]) return alert("Playlist already exists!");
+    
+    const newState = { ...playlists, [name]: [] };
+    updateAndSavePlaylists(newState);
+    setNewPlaylistName('');
+  };
+
+  const deletePlaylist = (listName: string) => {
+    if (confirm(`Are you sure you want to delete "${listName}"?`)) {
+      const newState = { ...playlists };
+      delete newState[listName];
+      updateAndSavePlaylists(newState);
+      
+      if (currentView.type === 'PLAYLIST_DETAIL' && currentView.name === listName) {
+        navigateTo({ type: 'PLAYLISTS_LIST' });
+      }
+    }
+  };
 
   // --- NAVIGATION ---
   const navigateTo = (view: AppView) => {
@@ -316,36 +350,6 @@ export default function MasterController() {
     } finally { setLoading(false); }
   };
 
-  const addToPlaylist = useCallback((dance: Dance, listName: string) => {
-    if (!dance || !listName) return;
-    setActiveBtn(listName);
-    setPlaylists(prev => {
-      const currentList = prev[listName] || [];
-      if (currentList.some(item => item.id === dance.id)) return prev;
-      return { ...prev, [listName]: [...currentList, normalizeDanceData(dance)] };
-    });
-    setTimeout(() => setActiveBtn(null), 1000);
-  }, []);
-
-  const removeFromPlaylist = (danceId: string, listName: string) => {
-    setPlaylists(prev => ({ ...prev, [listName]: (prev[listName] || []).filter(d => d.id !== danceId) }));
-  };
-
-  const createPlaylist = () => {
-    if (!newPlaylistName.trim()) return;
-    const name = newPlaylistName.trim().toLowerCase();
-    if (playlists[name]) return alert("Exists!");
-    setPlaylists(prev => ({ ...prev, [name]: [] }));
-    setNewPlaylistName('');
-  };
-
-  const deletePlaylist = (listName: string) => {
-    if (confirm(`Delete "${listName}"?`)) {
-      setPlaylists(prev => { const newState = { ...prev }; delete newState[listName]; return newState; });
-      if (currentView.type === 'PLAYLIST_DETAIL' && currentView.name === listName) navigateTo({ type: 'PLAYLISTS_LIST' });
-    }
-  };
-
   const handleAuth = async (isLogin: boolean) => {
     try {
       if (isLogin) await signInWithEmailAndPassword(auth, email, password);
@@ -355,8 +359,6 @@ export default function MasterController() {
   const handleGoogle = async () => {
     try { await signInWithPopup(auth, googleProvider); } catch (err: any) { alert(err.message); }
   };
-
-  const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '180px');
 
   // --- FILTER & SORT LOGIC ---
   const applyFiltersAndSort = (list: Dance[]) => {
@@ -398,7 +400,6 @@ export default function MasterController() {
     </div>
   );
 
-  // --- RENDER HELPERS ---
   const renderDanceProfile = (dance: Dance) => {
     if (!dance) return <div>Data Missing</div>;
     return (
@@ -407,7 +408,6 @@ export default function MasterController() {
         <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{dance.title}</h1>
         <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{dance.difficultyLevel} • {dance.counts} counts • {dance.wallCount} walls</div>
         <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist}</p></div>
-        
         <div style={{ marginBottom: '30px' }}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -419,7 +419,6 @@ export default function MasterController() {
             })}
           </div>
         </div>
-
         <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}30`, paddingTop: '20px' }}>
           <h3 style={{ fontSize: '1.4rem', marginBottom: '15px', color: COLORS.PRIMARY }}>Step Sheet</h3>
           <div style={{ backgroundColor: '#FAFAFA', padding: '20px', borderRadius: '8px', fontSize: '14px', color: '#333', border: '1px solid #EEE' }}>
@@ -439,7 +438,6 @@ export default function MasterController() {
     );
   };
 
-  // --- RENDER SPLASH ---
   if (showSplash) {
     return (
       <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: COLORS.BACKGROUND, display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
@@ -449,7 +447,6 @@ export default function MasterController() {
     );
   }
 
-  // Generate Filtered & Paginated Lists
   let displayList: Dance[] = [];
   if (currentView.type === 'SEARCH') displayList = applyFiltersAndSort(results);
   if (currentView.type === 'PLAYLIST_DETAIL') displayList = applyFiltersAndSort(playlists[currentView.name] || []);
@@ -459,12 +456,12 @@ export default function MasterController() {
   const paginatedList = displayList.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(displayList.length / itemsPerPage);
 
-  // --- MAIN APP RENDER ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
-      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none', transition: 'padding 0.3s ease' }}>
-        <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
-          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: 'max-height 0.3s ease-in-out' }} />
+      <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none', transition: 'box-shadow 0.3s ease' }}>
+        <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
+          {/* FIX FOR SHAKING: Removed dynamic resizing. Height is strictly driven by device type. */}
+          <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: isMobile ? '120px' : '180px', width: 'auto', margin: '0 auto', display: 'block' }} />
           {currentView.type !== 'DANCE_PROFILE' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
               <button onClick={() => navigateTo({ type: 'SEARCH' })} style={{ padding: '10px 20px', background: 'none', border: 'none', borderBottom: currentView.type === 'SEARCH' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer' }}>Search</button>

@@ -85,7 +85,6 @@ interface ApiRawItem {
   }>;
 }
 
-// --- ROUTING TYPES ---
 type ReturnPath = 
   | { type: 'SEARCH' }
   | { type: 'PLAYLIST_DETAIL'; name: string };
@@ -100,12 +99,12 @@ type AppView =
 // --- DATA SANITIZERS ---
 const cleanTitle = (title: string | undefined) => {
   if (!title) return "Untitled";
-  return String(title).replace(/\s*\([a-zA-Z0-9\s]+\)$/, '').trim();
+  // Removes trailing parentheses and their contents, e.g., "American Kids (L)" -> "American Kids"
+  return String(title).replace(/\s*\([^)]*\)$/, '').trim();
 };
 
 const normalizeDanceData = (raw: any): Dance => {
   if (!raw) return { id: 'error', title: 'Error', difficultyLevel: '', counts: 0, songTitle: '', songArtist: '', wallCount: 0 };
-  
   return {
     id: String(raw.id || 'unknown-id'),
     title: cleanTitle(raw.title),
@@ -130,7 +129,6 @@ const getDifficultyColor = (level: string) => {
   return COLORS.NEUTRAL; 
 };
 
-// Component: Color Legend
 const DifficultyLegend = () => (
   <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', padding: '15px', backgroundColor: COLORS.BACKGROUND, borderTop: `1px solid ${COLORS.PRIMARY}20`, flexWrap: 'wrap', fontSize: '11px', color: '#666' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00BCD4' }} /> Absolute</div>
@@ -148,8 +146,14 @@ export default function MasterController() {
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  
+  // Pagination State
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+  // Filter & Sort State
+  const [filterDiff, setFilterDiff] = useState('all');
+  const [sortOrder, setSortOrder] = useState('default');
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
@@ -169,26 +173,22 @@ export default function MasterController() {
       "dances i want to know": []
   });
 
-  // --- SPLASH SCREEN EFFECT (Audio removed) ---
+  // --- SPLASH SCREEN TIMEOUT ---
   useEffect(() => {
     if (showSplash) {
-      const timer = setTimeout(() => {
-        setShowSplash(false);
-      }, 2500);
+      const timer = setTimeout(() => setShowSplash(false), 2500);
       return () => clearTimeout(timer);
     }
   }, [showSplash]);
 
-  // --- DATA LOADING & CLEANING ---
+  // --- DATA LOADING & SYNC ---
   useEffect(() => {
     try {
       const localPlaylists = localStorage.getItem(STORAGE_KEYS.PERMANENT);
       if (localPlaylists) {
         const parsed = JSON.parse(localPlaylists);
         const cleaned: any = {};
-        Object.keys(parsed).forEach(key => {
-          cleaned[key] = parsed[key].map((d: any) => normalizeDanceData(d));
-        });
+        Object.keys(parsed).forEach(key => { cleaned[key] = parsed[key].map((d: any) => normalizeDanceData(d)); });
         setPlaylists(cleaned);
       }
       const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
@@ -206,9 +206,7 @@ export default function MasterController() {
           if (docSnap.exists()) {
             const data = docSnap.data();
             const cleaned: any = {};
-            Object.keys(data).forEach(key => {
-              cleaned[key] = (data[key] || []).map((d: any) => normalizeDanceData(d));
-            });
+            Object.keys(data).forEach(key => { cleaned[key] = (data[key] || []).map((d: any) => normalizeDanceData(d)); });
             setPlaylists(cleaned);
           } else {
             await setDoc(docRef, playlists);
@@ -223,9 +221,7 @@ export default function MasterController() {
   useEffect(() => {
     if (isDataLoaded) {
       localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(playlists));
-      if (user) {
-        setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
-      }
+      if (user) setDoc(doc(db, "users", user.uid), playlists).catch(console.error);
     }
   }, [playlists, user, isDataLoaded]);
 
@@ -234,29 +230,25 @@ export default function MasterController() {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener('scroll', handleScroll);
     window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('scroll', handleScroll);
-      window.removeEventListener('resize', handleResize);
-    };
+    return () => { window.removeEventListener('scroll', handleScroll); window.removeEventListener('resize', handleResize); };
   }, []);
 
   // --- NAVIGATION ---
   const navigateTo = (view: AppView) => {
     setCurrentView(view);
+    setFilterDiff('all');
+    setSortOrder('default');
+    setCurrentPage(1);
     window.scrollTo(0,0);
   };
 
   const handleBack = () => {
     if (currentView.type === 'DANCE_PROFILE') {
       const path = currentView.returnPath;
-      if (path.type === 'SEARCH') {
-        setCurrentView({ type: 'SEARCH' });
-      } else if (path.type === 'PLAYLIST_DETAIL') {
-        if (playlists[path.name]) {
-          setCurrentView({ type: 'PLAYLIST_DETAIL', name: path.name });
-        } else {
-          setCurrentView({ type: 'PLAYLISTS_LIST' });
-        }
+      if (path.type === 'SEARCH') setCurrentView({ type: 'SEARCH' });
+      else if (path.type === 'PLAYLIST_DETAIL') {
+        if (playlists[path.name]) setCurrentView({ type: 'PLAYLIST_DETAIL', name: path.name });
+        else setCurrentView({ type: 'PLAYLISTS_LIST' });
       }
     } else if (currentView.type === 'PLAYLIST_DETAIL') {
       navigateTo({ type: 'PLAYLISTS_LIST' });
@@ -266,40 +258,24 @@ export default function MasterController() {
   // --- DATA FETCHING ---
   const loadDanceDetails = async (rawDance: any, source: ReturnPath) => {
     if (!rawDance || !rawDance.id) return;
-
     setLoading(true);
     let cleanDance = normalizeDanceData(rawDance);
 
     try {
-      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${cleanDance.id}`, {
-         headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-      });
-      
+      const detailsRes = await fetch(`${BASE_URL}/dances/getById?id=${cleanDance.id}`, { headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' } });
       if (detailsRes.ok) {
         const details = await detailsRes.json();
         cleanDance = normalizeDanceData({ ...cleanDance, ...details });
-        
         const sheetId = cleanDance.stepSheetId || cleanDance.id;
-        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, {
-          headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-        });
-        
+        const sheetRes = await fetch(`${BASE_URL}/dances/getStepSheet?id=${sheetId}`, { headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' } });
         if (sheetRes.ok) {
           const sheetData = await sheetRes.json();
-          if (Array.isArray(sheetData.content)) {
-            cleanDance.stepSheetContent = sheetData.content;
-          }
+          if (Array.isArray(sheetData.content)) cleanDance.stepSheetContent = sheetData.content;
         }
       }
-    } catch (err) {
-      console.warn("Fetch issue (non-fatal):", err);
-    }
+    } catch (err) { console.warn("Fetch issue:", err); }
 
-    setCurrentView({ 
-      type: 'DANCE_PROFILE', 
-      dance: cleanDance, 
-      returnPath: source 
-    });
+    setCurrentView({ type: 'DANCE_PROFILE', dance: cleanDance, returnPath: source });
     setLoading(false);
   };
 
@@ -307,49 +283,37 @@ export default function MasterController() {
     if (!searchQuery) return;
     setLoading(true);
     setCurrentPage(1);
+    setFilterDiff('all');
     
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents);
     localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
 
     try {
-      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`, {
-        headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' }
-      });
-      
+      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`, { headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' } });
       if (!res.ok) throw new Error(`Status: ${res.status}`);
       const data = await res.json();
       const items = (data.items || []) as ApiRawItem[];
-      
       if (items.length === 0) alert("No results found.");
-
       setResults(items.map(item => normalizeDanceData(item)));
     } catch (err) { 
-      console.error(err);
-      alert("Search failed. Check connection.");
-    } finally {
-      setLoading(false);
-    }
+      console.error(err); alert("Search failed. Check connection."); 
+    } finally { setLoading(false); }
   };
 
   const addToPlaylist = useCallback((dance: Dance, listName: string) => {
     if (!dance || !listName) return;
     setActiveBtn(listName);
-    
     setPlaylists(prev => {
       const currentList = prev[listName] || [];
       if (currentList.some(item => item.id === dance.id)) return prev;
       return { ...prev, [listName]: [...currentList, normalizeDanceData(dance)] };
     });
-    
     setTimeout(() => setActiveBtn(null), 1000);
   }, []);
 
   const removeFromPlaylist = (danceId: string, listName: string) => {
-    setPlaylists(prev => ({
-      ...prev,
-      [listName]: (prev[listName] || []).filter(d => d.id !== danceId)
-    }));
+    setPlaylists(prev => ({ ...prev, [listName]: (prev[listName] || []).filter(d => d.id !== danceId) }));
   };
 
   const createPlaylist = () => {
@@ -362,14 +326,8 @@ export default function MasterController() {
 
   const deletePlaylist = (listName: string) => {
     if (confirm(`Delete "${listName}"?`)) {
-      setPlaylists(prev => {
-        const newState = { ...prev };
-        delete newState[listName];
-        return newState;
-      });
-      if (currentView.type === 'PLAYLIST_DETAIL' && currentView.name === listName) {
-        navigateTo({ type: 'PLAYLISTS_LIST' });
-      }
+      setPlaylists(prev => { const newState = { ...prev }; delete newState[listName]; return newState; });
+      if (currentView.type === 'PLAYLIST_DETAIL' && currentView.name === listName) navigateTo({ type: 'PLAYLISTS_LIST' });
     }
   };
 
@@ -380,24 +338,63 @@ export default function MasterController() {
     } catch (err: any) { alert(err.message); }
   };
   const handleGoogle = async () => {
-    try { await signInWithPopup(auth, googleProvider); } 
-    catch (err: any) { alert(err.message); }
+    try { await signInWithPopup(auth, googleProvider); } catch (err: any) { alert(err.message); }
   };
 
-  // FIX: Fixed the massive 360px desktop logo to a clean 180px
   const getLogoSize = () => isScrolled ? '60px' : (isMobile ? '120px' : '180px');
+
+  // --- FILTER & SORT LOGIC ---
+  const applyFiltersAndSort = (list: Dance[]) => {
+    let processed = [...list];
+    
+    if (filterDiff !== 'all') {
+      processed = processed.filter(d => d.difficultyLevel?.toLowerCase().includes(filterDiff));
+    }
+    
+    if (sortOrder === 'az') {
+      processed.sort((a, b) => a.title.localeCompare(b.title));
+    } else if (sortOrder === 'za') {
+      processed.sort((a, b) => b.title.localeCompare(a.title));
+    }
+    return processed;
+  };
+
+  const FilterComponent = () => (
+    <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', backgroundColor: COLORS.WHITE, padding: '10px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+      <select 
+        value={filterDiff} 
+        onChange={(e) => { setFilterDiff(e.target.value); setCurrentPage(1); }}
+        style={{ flex: 1, padding: '8px', borderRadius: '4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '14px' }}
+      >
+        <option value="all">All Levels</option>
+        <option value="absolute">Absolute</option>
+        <option value="beginner">Beginner</option>
+        <option value="improver">Improver</option>
+        <option value="intermediate">Intermediate</option>
+        <option value="advanced">Advanced</option>
+      </select>
+      
+      <select 
+        value={sortOrder} 
+        onChange={(e) => { setSortOrder(e.target.value); setCurrentPage(1); }}
+        style={{ flex: 1, padding: '8px', borderRadius: '4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '14px' }}
+      >
+        <option value="default">Sort: Default</option>
+        <option value="az">Sort: A-Z</option>
+        <option value="za">Sort: Z-A</option>
+      </select>
+    </div>
+  );
 
   // --- RENDER HELPERS ---
   const renderDanceProfile = (dance: Dance) => {
     if (!dance) return <div>Data Missing</div>;
-    
     return (
       <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
         <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
-        <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{dance.title.toLowerCase()}</h1>
-        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{dance.difficultyLevel.toLowerCase()} • {dance.counts} counts • {dance.wallCount} walls</div>
-        <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle.toLowerCase()}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist.toLowerCase()}</p></div>
-        
+        <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{dance.title}</h1>
+        <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{dance.difficultyLevel} • {dance.counts} counts • {dance.wallCount} walls</div>
+        <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {dance.songTitle}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {dance.songArtist}</p></div>
         <div style={{ marginBottom: '30px' }}>
           <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
@@ -409,7 +406,6 @@ export default function MasterController() {
             })}
           </div>
         </div>
-
         <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}30`, paddingTop: '20px' }}>
           <h3 style={{ fontSize: '1.4rem', marginBottom: '15px', color: COLORS.PRIMARY }}>Step Sheet</h3>
           <div style={{ backgroundColor: '#FAFAFA', padding: '20px', borderRadius: '8px', fontSize: '14px', color: '#333', border: '1px solid #EEE' }}>
@@ -429,53 +425,31 @@ export default function MasterController() {
     );
   };
 
-  // --- RENDER ---
-  
-  // RENDER SPLASH SCREEN
+  // --- RENDER SPLASH ---
   if (showSplash) {
     return (
-      <div style={{ 
-        position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
-        backgroundColor: COLORS.BACKGROUND, 
-        display: 'flex', justifyContent: 'center', alignItems: 'center', 
-        zIndex: 9999 
-      }}>
-        {/* FIX: Centered strictly with auto margins and clamped width for desktop */}
-        <img 
-          src={isMobile ? bootstepperMobileLogo : bootstepperLogo} 
-          alt="Bootstepper Splash" 
-          style={{
-            width: '100%',
-            maxWidth: isMobile ? '300px' : '500px',
-            height: 'auto',
-            margin: '0 auto',
-            animation: 'swoopIn 2.5s ease-out forwards'
-          }} 
-        />
-        <style>{`
-          @keyframes swoopIn {
-            0% { transform: scale(0.1) translateY(100px); opacity: 0; }
-            60% { transform: scale(1.05) translateY(0); opacity: 1; }
-            100% { transform: scale(1) translateY(0); opacity: 1; }
-          }
-        `}</style>
+      <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: COLORS.BACKGROUND, display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 9999 }}>
+        <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="Bootstepper Splash" style={{ width: '100%', maxWidth: isMobile ? '300px' : '500px', height: 'auto', margin: '0 auto', animation: 'swoopIn 2.5s ease-out forwards' }} />
+        <style>{`@keyframes swoopIn { 0% { transform: scale(0.1) translateY(100px); opacity: 0; } 60% { transform: scale(1.05) translateY(0); opacity: 1; } 100% { transform: scale(1) translateY(0); opacity: 1; } }`}</style>
       </div>
     );
   }
 
-  // --- MAIN APP RENDER ---
+  // Calculate Paginated & Filtered Results based on current view
+  let displayList: Dance[] = [];
+  if (currentView.type === 'SEARCH') displayList = applyFiltersAndSort(results);
+  if (currentView.type === 'PLAYLIST_DETAIL') displayList = applyFiltersAndSort(playlists[currentView.name] || []);
+
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const currentResults = results.slice(indexOfFirstItem, indexOfLastItem);
-  const totalPages = Math.ceil(results.length / itemsPerPage);
+  const paginatedList = displayList.slice(indexOfFirstItem, indexOfLastItem);
+  const totalPages = Math.ceil(displayList.length / itemsPerPage);
 
+  // --- MAIN APP RENDER ---
   return (
     <div style={{ backgroundColor: COLORS.BACKGROUND, minHeight: '100vh', fontFamily: "'Roboto', sans-serif" }}>
-      
-      {/* HEADER */}
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none', transition: 'padding 0.3s ease' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: isScrolled ? '10px' : '20px' }}>
-          {/* FIX: Smooth max-height transition to prevent scroll glitching */}
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: getLogoSize(), width: 'auto', margin: '0 auto', display: 'block', transition: 'max-height 0.3s ease-in-out' }} />
           {currentView.type !== 'DANCE_PROFILE' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px' }}>
@@ -488,8 +462,6 @@ export default function MasterController() {
       </div>
 
       <div style={{ maxWidth: '900px', margin: '0 auto', padding: '20px' }}>
-        
-        {/* LOADER */}
         {loading && <div style={{ textAlign: 'center', padding: '40px', fontSize: '1.2rem', color: COLORS.PRIMARY, fontWeight: 'bold' }}>Loading...</div>}
 
         {!loading && (
@@ -502,22 +474,27 @@ export default function MasterController() {
                   <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
                   <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>Go</button>
                 </form>
+                
                 {recentSearches.length > 0 && results.length === 0 && (
                   <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                     <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
                     {recentSearches.map(s => <button key={s} onClick={() => { setQuery(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
                   </div>
                 )}
-                {currentResults.map(d => (
+                
+                {results.length > 0 && <FilterComponent />}
+
+                {paginatedList.map(d => (
                   <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                     <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
                     <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
                   </div>
                 ))}
-                {results.length > itemsPerPage && (
+                
+                {displayList.length > itemsPerPage && (
                   <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
                     <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages}</span>
+                    <span>Page {currentPage} of {totalPages || 1}</span>
                     <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
                   </div>
                 )}
@@ -540,12 +517,23 @@ export default function MasterController() {
               <div>
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
                 <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
-                {playlists[currentView.name] ? playlists[currentView.name].map(d => (
+                
+                {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
+
+                {playlists[currentView.name] ? paginatedList.map(d => (
                   <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title.toLowerCase()}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle.toLowerCase()}</div></div>
+                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
                     <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
                   </div>
                 )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
+                
+                {displayList.length > itemsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
+                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
+                    <span>Page {currentPage} of {totalPages || 1}</span>
+                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
+                  </div>
+                )}
               </div>
             )}
 

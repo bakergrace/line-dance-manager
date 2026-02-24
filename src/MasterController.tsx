@@ -70,6 +70,7 @@ export interface UserProfile {
   location: string; 
   photoUrl: string;
   following: string[];
+  followers: string[]; // PHASE 3: Added followers array
 }
 
 type ReturnPath = { type: 'SEARCH' } | { type: 'PLAYLIST_DETAIL'; name: string } | { type: 'COMMUNITY' };
@@ -80,7 +81,8 @@ type AppView =
   | { type: 'ACCOUNT' } 
   | { type: 'COMMUNITY' }
   | { type: 'OTHER_PROFILE'; targetProfile: UserProfile }
-  | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
+  | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath }
+  | { type: 'USER_LIST'; listTitle: string; uids: string[]; returnPath: AppView }; // PHASE 3: Added User List View
 
 // --- DATA SANITIZERS ---
 const cleanTitle = (title: string | undefined) => title ? String(title).replace(/\s*\([^)]*\)$/, '').trim() : "Untitled";
@@ -102,11 +104,11 @@ const normalizeDanceData = (raw: any): Dance => {
 
 const getDifficultyColor = (level: string) => {
   const l = (level || '').toLowerCase();
-  if (l.includes('absolute')) return '#00BCD4';     
-  if (l.includes('beginner')) return '#4CAF50';     
-  if (l.includes('improver')) return '#FF9800';     
+  if (l.includes('absolute')) return '#00BCD4';    
+  if (l.includes('beginner')) return '#4CAF50';    
+  if (l.includes('improver')) return '#FF9800';    
   if (l.includes('intermediate')) return '#F44336'; 
-  if (l.includes('advanced')) return '#9C27B0';     
+  if (l.includes('advanced')) return '#9C27B0';    
   return COLORS.NEUTRAL; 
 };
 
@@ -137,9 +139,7 @@ export default function MasterController() {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   
-  // GLOBAL LOADING
   const [loading, setLoading] = useState(false);
-  
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
 
   const [user, setUser] = useState<User | null>(null);
@@ -154,7 +154,8 @@ export default function MasterController() {
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(DEFAULT_PLAYLISTS);
   const [newPlaylistName, setNewPlaylistName] = useState('');
 
-  const [profile, setProfile] = useState<UserProfile>({ username: '', firstName: '', lastName: '', bio: '', location: '', photoUrl: '', following: [] });
+  // PHASE 3: Ensure followers array is defined in default state
+  const [profile, setProfile] = useState<UserProfile>({ username: '', firstName: '', lastName: '', bio: '', location: '', photoUrl: '', following: [], followers: [] });
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
@@ -163,7 +164,11 @@ export default function MasterController() {
   // COMMUNITY STATE
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityResults, setCommunityResults] = useState<UserProfile[]>([]);
-  const [isSearchingCommunity, setIsSearchingCommunity] = useState(false); // NEW LOCAL LOADING STATE
+  const [isSearchingCommunity, setIsSearchingCommunity] = useState(false);
+
+  // PHASE 3: State for Follower/Following Lists
+  const [userListResults, setUserListResults] = useState<UserProfile[]>([]);
+  const [isLoadingUserList, setIsLoadingUserList] = useState(false);
 
   useEffect(() => {
     if (showSplash) {
@@ -201,7 +206,8 @@ export default function MasterController() {
             localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(cleaned));
         }
         if (data.profile) {
-            setProfile({ ...data.profile, following: data.profile.following || [] });
+            // PHASE 3: Make sure we map followers too
+            setProfile({ ...data.profile, following: data.profile.following || [], followers: data.profile.followers || [] });
             if (data.profile.username) setIsEditingProfile(false);
         } else {
             setIsEditingProfile(true); 
@@ -222,7 +228,7 @@ export default function MasterController() {
     if (!currentUser) return;
     setSyncMessage("Saving to cloud...");
     try {
-      await setDoc(doc(db, "users", currentUser.uid), { playlists: playlistsToSave, profile: profileToSave });
+      await setDoc(doc(db, "users", currentUser.uid), { playlists: playlistsToSave, profile: profileToSave }, { merge: true });
       setSyncMessage("Successfully saved to cloud!");
     } catch (error: any) {
       console.error(error); setSyncMessage(`Upload Failed: ${error.message}`);
@@ -344,7 +350,7 @@ export default function MasterController() {
         setCommunityResults([]);
         return;
     }
-    setIsSearchingCommunity(true); // USE LOCAL LOADING STATE
+    setIsSearchingCommunity(true);
     try {
         const lowerQ = queryStr.toLowerCase().trim();
         const usersRef = collection(db, "users");
@@ -361,12 +367,16 @@ export default function MasterController() {
         });
         setCommunityResults(fetchedUsers);
     } catch (error) { console.error("Error searching community:", error); }
-    setIsSearchingCommunity(false); // END LOCAL LOADING STATE
+    setIsSearchingCommunity(false);
   };
 
+  // PHASE 3: Updated to update BOTH users' arrays
   const toggleFollow = async (targetUid: string) => {
     if (!user || !targetUid) return;
+    
     const isCurrentlyFollowing = profile.following.includes(targetUid);
+    
+    // 1. Update Current User's 'Following' List locally and in cloud
     let updatedFollowing = [...profile.following];
     if (isCurrentlyFollowing) {
         updatedFollowing = updatedFollowing.filter(id => id !== targetUid);
@@ -376,6 +386,60 @@ export default function MasterController() {
     const updatedProfile = { ...profile, following: updatedFollowing };
     setProfile(updatedProfile); 
     await pushToCloud(playlists, updatedProfile, user); 
+    
+    // 2. Update Target User's 'Followers' List in cloud
+    try {
+      const targetDocRef = doc(db, "users", targetUid);
+      const targetSnap = await getDoc(targetDocRef);
+      if (targetSnap.exists()) {
+        const targetData = targetSnap.data();
+        const targetProfile = targetData.profile || {};
+        let targetFollowers = targetProfile.followers || [];
+        
+        if (isCurrentlyFollowing) {
+           targetFollowers = targetFollowers.filter((id: string) => id !== user.uid);
+        } else {
+           if (!targetFollowers.includes(user.uid)) targetFollowers.push(user.uid);
+        }
+        await setDoc(targetDocRef, { profile: { ...targetProfile, followers: targetFollowers } }, { merge: true });
+        
+        // If we are currently viewing this user, instantly update the UI count
+        if (currentView.type === 'OTHER_PROFILE' && currentView.targetProfile.uid === targetUid) {
+          setCurrentView({ type: 'OTHER_PROFILE', targetProfile: { ...targetProfile, followers: targetFollowers, uid: targetUid }});
+        }
+      }
+    } catch (error) {
+      console.error("Error updating target user's followers list", error);
+    }
+  };
+
+  // PHASE 3: Fetching user profiles based on a list of UIDs
+  const loadUserList = async (title: string, uids: string[], returnPath: AppView) => {
+    setCurrentView({ type: 'USER_LIST', listTitle: title, uids, returnPath });
+    setIsLoadingUserList(true);
+    setUserListResults([]);
+    
+    if (!uids || uids.length === 0) {
+      setIsLoadingUserList(false);
+      return;
+    }
+
+    try {
+      const fetchedUsers: UserProfile[] = [];
+      // Fetch users individually by UID
+      const promises = uids.map(id => getDoc(doc(db, "users", id)));
+      const snaps = await Promise.all(promises);
+      
+      snaps.forEach(snap => {
+         if (snap.exists() && snap.data().profile) {
+            fetchedUsers.push({ ...snap.data().profile, uid: snap.id });
+         }
+      });
+      setUserListResults(fetchedUsers);
+    } catch (e) {
+      console.error("Error loading user list:", e);
+    }
+    setIsLoadingUserList(false);
   };
 
   useEffect(() => {
@@ -446,6 +510,7 @@ export default function MasterController() {
       }
     } else if (currentView.type === 'PLAYLIST_DETAIL') navigateTo({ type: 'PLAYLISTS_LIST' });
     else if (currentView.type === 'OTHER_PROFILE') navigateTo({ type: 'COMMUNITY' });
+    else if (currentView.type === 'USER_LIST') setCurrentView(currentView.returnPath); // PHASE 3: Added back logic
   };
 
   const loadDanceDetails = async (rawDance: any, source: ReturnPath) => {
@@ -524,7 +589,7 @@ export default function MasterController() {
       <div style={{ position: 'sticky', top: 0, backgroundColor: COLORS.BACKGROUND, zIndex: 10, paddingBottom: '10px', borderBottom: isScrolled ? `1px solid ${COLORS.PRIMARY}20` : 'none' }}>
         <div style={{ maxWidth: '900px', margin: '0 auto', textAlign: 'center', padding: '20px' }}>
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: isMobile ? '120px' : '180px', width: 'auto', margin: '0 auto', display: 'block' }} />
-          {currentView.type !== 'DANCE_PROFILE' && (
+          {currentView.type !== 'DANCE_PROFILE' && currentView.type !== 'USER_LIST' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px', gap: '5px' }}>
               <button onClick={() => navigateTo({ type: 'SEARCH' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'SEARCH' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Search</button>
               <button onClick={() => navigateTo({ type: 'PLAYLISTS_LIST' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'PLAYLISTS_LIST' || currentView.type === 'PLAYLIST_DETAIL' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Playlists</button>
@@ -540,6 +605,36 @@ export default function MasterController() {
 
         {!loading && !showSplash && (
           <>
+            {/* PHASE 3: New User List Screen */}
+            {currentView.type === 'USER_LIST' && (
+              <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
+                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
+                <h2 style={{ color: COLORS.PRIMARY, textAlign: 'center', marginBottom: '20px' }}>{currentView.listTitle}</h2>
+                
+                {isLoadingUserList ? (
+                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, marginTop: '20px' }}>Loading users...</div>
+                ) : userListResults.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, marginTop: '20px' }}>No users found.</div>
+                ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                        {userListResults.map(targetUser => (
+                            <div key={targetUser.uid} onClick={() => setCurrentView({ type: 'OTHER_PROFILE', targetProfile: targetUser })} style={{ backgroundColor: '#F9F9F9', padding: '15px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '15px', cursor: 'pointer', border: '1px solid #EEE' }}>
+                                {targetUser.photoUrl ? (
+                                    <img src={targetUser.photoUrl} alt="Profile" style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover' }} />
+                                ) : (
+                                    <div style={{ width: '50px', height: '50px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#999' }}>👤</div>
+                                )}
+                                <div style={{ flex: 1 }}>
+                                    <div style={{ fontWeight: 'bold', color: '#333' }}>{targetUser.firstName} {targetUser.lastName}</div>
+                                    <div style={{ fontSize: '13px', color: COLORS.PRIMARY }}>@{targetUser.username}</div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+              </div>
+            )}
+
             {currentView.type === 'DANCE_PROFILE' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
@@ -654,7 +749,6 @@ export default function MasterController() {
                   />
                 </div>
                 
-                {/* LOCAL LOADING SPINNER */}
                 {isSearchingCommunity && (
                     <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, fontSize: '12px', marginBottom: '10px' }}>Searching...</div>
                 )}
@@ -694,6 +788,17 @@ export default function MasterController() {
                         <h2 style={{ color: '#333', marginTop: '15px', marginBottom: '5px' }}>{currentView.targetProfile.firstName} {currentView.targetProfile.lastName}</h2>
                     )}
                     <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (currentView.targetProfile.firstName || currentView.targetProfile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{currentView.targetProfile.username}</p>
+                    
+                    {/* PHASE 3: Clickable Stats for Other Profiles */}
+                    <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '15px', color: COLORS.NEUTRAL, fontSize: '14px' }}>
+                        <div onClick={() => loadUserList(`${currentView.targetProfile.firstName || 'User'}'s Followers`, currentView.targetProfile.followers || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
+                            <strong style={{ color: COLORS.PRIMARY }}>{currentView.targetProfile.followers?.length || 0}</strong> Followers
+                        </div>
+                        <div onClick={() => loadUserList(`Following`, currentView.targetProfile.following || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
+                            <strong style={{ color: COLORS.PRIMARY }}>{currentView.targetProfile.following?.length || 0}</strong> Following
+                        </div>
+                    </div>
+
                     {currentView.targetProfile.bio && (
                         <p style={{ color: '#555', fontSize: '14px', maxWidth: '400px', margin: '0 auto 15px auto', fontStyle: 'italic' }}>"{currentView.targetProfile.bio}"</p>
                     )}
@@ -738,9 +843,17 @@ export default function MasterController() {
                                     <h2 style={{ color: '#333', marginTop: '15px', marginBottom: '5px' }}>{profile.firstName} {profile.lastName}</h2>
                                 )}
                                 <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (profile.firstName || profile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{profile.username}</p>
+                                
+                                {/* PHASE 3: Clickable Stats for Your Account */}
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '15px', color: COLORS.NEUTRAL, fontSize: '14px' }}>
-                                    <div><strong>{profile.following?.length || 0}</strong> Following</div>
+                                    <div onClick={() => loadUserList("Followers", profile.followers || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
+                                        <strong style={{ color: COLORS.PRIMARY }}>{profile.followers?.length || 0}</strong> Followers
+                                    </div>
+                                    <div onClick={() => loadUserList("Following", profile.following || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
+                                        <strong style={{ color: COLORS.PRIMARY }}>{profile.following?.length || 0}</strong> Following
+                                    </div>
                                 </div>
+
                                 {profile.bio && (
                                     <p style={{ color: '#555', fontSize: '14px', maxWidth: '400px', margin: '0 auto 15px auto', fontStyle: 'italic' }}>"{profile.bio}"</p>
                                 )}

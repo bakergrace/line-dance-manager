@@ -4,12 +4,13 @@ import { useState, useEffect } from 'react';
 import { initializeApp } from "firebase/app";
 import { 
   getAuth, signInWithPopup, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, onAuthStateChanged
+  createUserWithEmailAndPassword, signOut, onAuthStateChanged,
+  sendPasswordResetEmail, deleteUser
 } from "firebase/auth";
 import type { User } from "firebase/auth"; 
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
-  getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs 
+  getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc
 } from "firebase/firestore"; 
 import { 
   getStorage, ref, uploadBytes, getDownloadURL 
@@ -61,14 +62,14 @@ export interface Dance {
 }
 
 export interface UserProfile {
-  uid?: string; // Required for following
+  uid?: string;
   username: string; 
   firstName: string; 
   lastName: string;
   bio: string; 
   location: string; 
   photoUrl: string;
-  following: string[]; // NEW: Tracks who the user follows
+  following: string[];
 }
 
 type ReturnPath = { type: 'SEARCH' } | { type: 'PLAYLIST_DETAIL'; name: string } | { type: 'COMMUNITY' };
@@ -77,8 +78,8 @@ type AppView =
   | { type: 'PLAYLISTS_LIST' } 
   | { type: 'PLAYLIST_DETAIL'; name: string } 
   | { type: 'ACCOUNT' } 
-  | { type: 'COMMUNITY' } // NEW
-  | { type: 'OTHER_PROFILE'; targetProfile: UserProfile } // NEW
+  | { type: 'COMMUNITY' }
+  | { type: 'OTHER_PROFILE'; targetProfile: UserProfile }
   | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath };
 
 // --- DATA SANITIZERS ---
@@ -142,8 +143,12 @@ export default function MasterController() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
-  const [syncMessage, setSyncMessage] = useState<string | null>(null);
+  
+  // NEW: UI State for Password Visibility & Recovery
+  const [showPassword, setShowPassword] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
 
+  const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(DEFAULT_PLAYLISTS);
   const [newPlaylistName, setNewPlaylistName] = useState('');
 
@@ -153,7 +158,6 @@ export default function MasterController() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  // NEW: Community State
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityResults, setCommunityResults] = useState<UserProfile[]>([]);
 
@@ -222,6 +226,58 @@ export default function MasterController() {
     setTimeout(() => setSyncMessage(null), 3000);
   };
 
+  // --- AUTH FEATURES ---
+  const handleAuth = async (isLogin: boolean) => {
+    setAuthMessage(null);
+    try {
+      if (isLogin) await signInWithEmailAndPassword(auth, email, password);
+      else await createUserWithEmailAndPassword(auth, email, password);
+    } catch (err: any) { 
+        setAuthMessage(err.message.replace('Firebase:', '').trim()); 
+    }
+  };
+
+  const handleGoogle = async () => { try { await signInWithPopup(auth, googleProvider); } catch (err: any) { setAuthMessage(err.message); } };
+
+  const handlePasswordReset = async () => {
+    if (!email) {
+        setAuthMessage("Please enter your email address first.");
+        return;
+    }
+    try {
+        await sendPasswordResetEmail(auth, email);
+        setAuthMessage("Password reset email sent! Check your inbox.");
+    } catch (error: any) {
+        setAuthMessage("Error sending reset email: " + error.message);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!user) return;
+    const confirmDelete = prompt("Type 'DELETE' to permanently delete your account. This cannot be undone.");
+    if (confirmDelete !== 'DELETE') return;
+
+    try {
+        // Optional: Clean up Firestore data before deleting user
+        // Note: Real-world apps usually use a Cloud Function for this to be cleaner
+        await deleteDoc(doc(db, "users", user.uid));
+        if (profile.username) {
+            await deleteDoc(doc(db, "usernames", profile.username));
+        }
+        
+        await deleteUser(user);
+        alert("Account deleted.");
+        // App will auto-redirect to login via onAuthStateChanged
+    } catch (error: any) {
+        if (error.code === 'auth/requires-recent-login') {
+            alert("Security Check: You must log out and log back in to delete your account.");
+        } else {
+            alert("Error deleting account: " + error.message);
+        }
+    }
+  };
+
+  // --- PROFILE LOGIC ---
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -281,7 +337,7 @@ export default function MasterController() {
     setTimeout(() => setProfileMessage(null), 3000);
   };
 
-  // --- NEW: COMMUNITY FUNCTIONS ---
+  // --- COMMUNITY LOGIC ---
   const handleUserSearch = async (queryStr: string) => {
     setCommunityQuery(queryStr);
     if (!queryStr.trim()) {
@@ -292,7 +348,6 @@ export default function MasterController() {
     try {
         const lowerQ = queryStr.toLowerCase().trim();
         const usersRef = collection(db, "users");
-        // Prefix search logic in Firestore
         const q = query(usersRef, where("profile.username", ">=", lowerQ), where("profile.username", "<=", lowerQ + '\uf8ff'));
         
         const querySnapshot = await getDocs(q);
@@ -300,37 +355,28 @@ export default function MasterController() {
         
         querySnapshot.forEach((docSnap) => {
             const data = docSnap.data();
-            // Don't show ourselves in the search results
             if (data.profile && docSnap.id !== user?.uid) {
                 fetchedUsers.push({ ...data.profile, uid: docSnap.id });
             }
         });
         setCommunityResults(fetchedUsers);
-    } catch (error) {
-        console.error("Error searching community:", error);
-    }
+    } catch (error) { console.error("Error searching community:", error); }
     setLoading(false);
   };
 
   const toggleFollow = async (targetUid: string) => {
     if (!user || !targetUid) return;
-    
     const isCurrentlyFollowing = profile.following.includes(targetUid);
     let updatedFollowing = [...profile.following];
-
     if (isCurrentlyFollowing) {
-        // Unfollow
         updatedFollowing = updatedFollowing.filter(id => id !== targetUid);
     } else {
-        // Follow
         updatedFollowing.push(targetUid);
     }
-
     const updatedProfile = { ...profile, following: updatedFollowing };
-    setProfile(updatedProfile); // Update UI instantly
-    await pushToCloud(playlists, updatedProfile, user); // Save to cloud
+    setProfile(updatedProfile); 
+    await pushToCloud(playlists, updatedProfile, user); 
   };
-
 
   useEffect(() => {
     const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
@@ -435,14 +481,6 @@ export default function MasterController() {
     } catch (err) { console.error(err); alert("Search failed. Check connection."); } finally { setLoading(false); }
   };
 
-  const handleAuth = async (isLogin: boolean) => {
-    try {
-      if (isLogin) await signInWithEmailAndPassword(auth, email, password);
-      else await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err: any) { alert(err.message); }
-  };
-  const handleGoogle = async () => { try { await signInWithPopup(auth, googleProvider); } catch (err: any) { alert(err.message); } };
-
   const applyFiltersAndSort = (list: Dance[]) => {
     let processed = [...list];
     if (filterDiff !== 'all') processed = processed.filter(d => d.difficultyLevel?.toLowerCase().includes(filterDiff));
@@ -502,6 +540,69 @@ export default function MasterController() {
 
         {!loading && !showSplash && (
           <>
+            {/* ... SEARCH and PLAYLIST views remain unchanged ... */}
+            {currentView.type === 'SEARCH' && (
+              <div style={{ paddingBottom: '60px' }}>
+                <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                  <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
+                  <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>Go</button>
+                </form>
+                {recentSearches.length > 0 && results.length === 0 && (
+                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
+                    {recentSearches.map(s => <button key={s} onClick={() => { setQueryInput(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
+                  </div>
+                )}
+                {results.length > 0 && <FilterComponent />}
+                {paginatedList.map(d => (
+                  <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
+                  </div>
+                ))}
+                {displayList.length > itemsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
+                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
+                    <span>Page {currentPage} of {totalPages || 1}</span>
+                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentView.type === 'PLAYLISTS_LIST' && (
+              <div>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button></div>
+                {Object.keys(playlists).map(name => (
+                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
+                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px' }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {currentView.type === 'PLAYLIST_DETAIL' && (
+              <div>
+                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
+                <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
+                {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
+                {playlists[currentView.name] ? paginatedList.map(d => (
+                  <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
+                    <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
+                  </div>
+                )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
+                {displayList.length > itemsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
+                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
+                    <span>Page {currentPage} of {totalPages || 1}</span>
+                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {currentView.type === 'DANCE_PROFILE' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
@@ -537,74 +638,6 @@ export default function MasterController() {
               </div>
             )}
 
-            {currentView.type === 'SEARCH' && (
-              <div style={{ paddingBottom: '60px' }}>
-                <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-                  <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
-                  <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>Go</button>
-                </form>
-                {recentSearches.length > 0 && results.length === 0 && (
-                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
-                    {recentSearches.map(s => <button key={s} onClick={() => { setQueryInput(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
-                  </div>
-                )}
-                
-                {results.length > 0 && <FilterComponent />}
-                
-                {paginatedList.map(d => (
-                  <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
-                  </div>
-                ))}
-                {displayList.length > itemsPerPage && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
-                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages || 1}</span>
-                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {currentView.type === 'PLAYLISTS_LIST' && (
-              <div>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button></div>
-                {Object.keys(playlists).map(name => (
-                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
-                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px' }}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {currentView.type === 'PLAYLIST_DETAIL' && (
-              <div>
-                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
-                <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
-                
-                {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
-                
-                {playlists[currentView.name] ? paginatedList.map(d => (
-                  <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
-                    <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
-                  </div>
-                )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
-                
-                {displayList.length > itemsPerPage && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
-                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages || 1}</span>
-                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* NEW: COMMUNITY TAB */}
             {currentView.type === 'COMMUNITY' && (
               <div>
                 <h2 style={{ color: COLORS.PRIMARY, textAlign: 'center', marginBottom: '20px' }}>Find Dancers</h2>
@@ -639,33 +672,25 @@ export default function MasterController() {
               </div>
             )}
 
-            {/* NEW: OTHER USER PROFILE */}
             {currentView.type === 'OTHER_PROFILE' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
-                
                 <div style={{ textAlign: 'center' }}>
                     {currentView.targetProfile.photoUrl ? (
                         <img src={currentView.targetProfile.photoUrl} alt="Profile" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }} />
                     ) : (
                         <div style={{ width: '120px', height: '120px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, fontSize: '40px', color: '#999' }}>👤</div>
                     )}
-                    
                     {(currentView.targetProfile.firstName || currentView.targetProfile.lastName) && (
                         <h2 style={{ color: '#333', marginTop: '15px', marginBottom: '5px' }}>{currentView.targetProfile.firstName} {currentView.targetProfile.lastName}</h2>
                     )}
-                    
                     <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (currentView.targetProfile.firstName || currentView.targetProfile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{currentView.targetProfile.username}</p>
-                    
                     {currentView.targetProfile.bio && (
                         <p style={{ color: '#555', fontSize: '14px', maxWidth: '400px', margin: '0 auto 15px auto', fontStyle: 'italic' }}>"{currentView.targetProfile.bio}"</p>
                     )}
-                    
                     {currentView.targetProfile.location && (
                         <p style={{ color: COLORS.NEUTRAL, fontSize: '13px', marginBottom: '20px' }}>📍 {currentView.targetProfile.location}</p>
                     )}
-
-                    {/* THE FOLLOW BUTTON */}
                     {currentView.targetProfile.uid && (
                         <button 
                             onClick={() => toggleFollow(currentView.targetProfile.uid!)} 
@@ -692,10 +717,7 @@ export default function MasterController() {
               <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                 {user ? (
                   <div>
-                    {/* SOCIAL PROFILE SECTION */}
                     <div style={{ borderBottom: `2px solid ${COLORS.PRIMARY}20`, paddingBottom: '20px', marginBottom: '20px' }}>
-                        
-                        {/* --- READ ONLY VIEW --- */}
                         {!isEditingProfile ? (
                             <div style={{ textAlign: 'center' }}>
                                 {profile.photoUrl ? (
@@ -703,32 +725,24 @@ export default function MasterController() {
                                 ) : (
                                     <div style={{ width: '120px', height: '120px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, fontSize: '40px', color: '#999' }}>👤</div>
                                 )}
-                                
                                 {(profile.firstName || profile.lastName) && (
                                     <h2 style={{ color: '#333', marginTop: '15px', marginBottom: '5px' }}>{profile.firstName} {profile.lastName}</h2>
                                 )}
-                                
                                 <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (profile.firstName || profile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{profile.username}</p>
-                                
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '15px', color: COLORS.NEUTRAL, fontSize: '14px' }}>
                                     <div><strong>{profile.following?.length || 0}</strong> Following</div>
                                 </div>
-
                                 {profile.bio && (
                                     <p style={{ color: '#555', fontSize: '14px', maxWidth: '400px', margin: '0 auto 15px auto', fontStyle: 'italic' }}>"{profile.bio}"</p>
                                 )}
-                                
                                 {profile.location && (
                                     <p style={{ color: COLORS.NEUTRAL, fontSize: '13px', marginBottom: '20px' }}>📍 {profile.location}</p>
                                 )}
-
                                 <button onClick={() => setIsEditingProfile(true)} style={{ backgroundColor: COLORS.WHITE, color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '8px 20px', borderRadius: '20px', fontWeight: 'bold', cursor: 'pointer', fontSize: '14px' }}>
                                     Edit Account
                                 </button>
                             </div>
                         ) : (
-                        
-                        /* --- EDIT FORM VIEW --- */
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                 <h3 style={{ margin: 0, color: COLORS.PRIMARY }}>Edit Profile</h3>
@@ -736,38 +750,15 @@ export default function MasterController() {
                                     <button onClick={() => { setIsEditingProfile(false); setUsernameStatus('idle'); }} style={{ background: 'none', border: 'none', color: COLORS.NEUTRAL, textDecoration: 'underline', cursor: 'pointer' }}>Cancel</button>
                                 )}
                             </div>
-
                             {profile.photoUrl && (
                                 <img src={profile.photoUrl} alt="Profile" style={{ width: '100px', height: '100px', borderRadius: '50%', objectFit: 'cover', margin: '0 auto', border: `2px solid ${COLORS.SECONDARY}` }} />
                             )}
-                            
                             <div style={{ textAlign: 'center' }}>
-                                <input 
-                                    type="file" 
-                                    accept="image/*" 
-                                    id="photo-upload"
-                                    style={{ display: 'none' }}
-                                    onChange={handlePhotoUpload}
-                                    disabled={isUploadingPhoto}
-                                />
-                                <label 
-                                    htmlFor="photo-upload" 
-                                    style={{ 
-                                        display: 'inline-block',
-                                        backgroundColor: COLORS.SECONDARY, 
-                                        color: COLORS.WHITE, 
-                                        padding: '10px 16px', 
-                                        borderRadius: '8px', 
-                                        cursor: isUploadingPhoto ? 'default' : 'pointer', 
-                                        fontSize: '14px', 
-                                        fontWeight: 'bold', 
-                                        opacity: isUploadingPhoto ? 0.7 : 1 
-                                    }}
-                                >
+                                <input type="file" accept="image/*" id="photo-upload" style={{ display: 'none' }} onChange={handlePhotoUpload} disabled={isUploadingPhoto} />
+                                <label htmlFor="photo-upload" style={{ display: 'inline-block', backgroundColor: COLORS.SECONDARY, color: COLORS.WHITE, padding: '10px 16px', borderRadius: '8px', cursor: isUploadingPhoto ? 'default' : 'pointer', fontSize: '14px', fontWeight: 'bold', opacity: isUploadingPhoto ? 0.7 : 1 }}>
                                     {isUploadingPhoto ? 'Uploading...' : '📷 Choose or Take Photo'}
                                 </label>
                             </div>
-
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 'bold', color: COLORS.NEUTRAL }}>Username (Required & Unique)</label>
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -788,7 +779,6 @@ export default function MasterController() {
                                 {usernameStatus === 'available' && profile.username && <span style={{ fontSize: '11px', color: COLORS.SUCCESS }}>Username available!</span>}
                                 {usernameStatus === 'taken' && <span style={{ fontSize: '11px', color: COLORS.ERROR }}>Username taken. Please choose another.</span>}
                             </div>
-
                             <div style={{ display: 'flex', gap: '10px' }}>
                                 <div style={{ flex: 1 }}>
                                     <label style={{ fontSize: '12px', fontWeight: 'bold', color: COLORS.NEUTRAL }}>First Name</label>
@@ -799,28 +789,31 @@ export default function MasterController() {
                                     <input type="text" value={profile.lastName} onChange={e => setProfile({...profile, lastName: e.target.value})} style={{ width: '100%', padding: '10px', borderRadius: '6px', border: `1px solid ${COLORS.PRIMARY}`, boxSizing: 'border-box' }} />
                                 </div>
                             </div>
-
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 'bold', color: COLORS.NEUTRAL }}>Bio</label>
                                 <textarea value={profile.bio} onChange={e => setProfile({...profile, bio: e.target.value})} placeholder="Tell people about your dancing..." style={{ width: '100%', padding: '10px', borderRadius: '6px', border: `1px solid ${COLORS.PRIMARY}`, boxSizing: 'border-box', minHeight: '60px', fontFamily: 'inherit' }} />
                             </div>
-
                             <div>
                                 <label style={{ fontSize: '12px', fontWeight: 'bold', color: COLORS.NEUTRAL }}>Location</label>
                                 <input type="text" value={profile.location} onChange={e => setProfile({...profile, location: e.target.value})} placeholder="e.g. Austin, TX" style={{ width: '100%', padding: '10px', borderRadius: '6px', border: `1px solid ${COLORS.PRIMARY}`, boxSizing: 'border-box' }} />
                             </div>
-
                             <button onClick={saveProfile} disabled={!profile.username || usernameStatus === 'taken' || isUploadingPhoto} style={{ backgroundColor: (!profile.username || usernameStatus === 'taken' || isUploadingPhoto) ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '12px', borderRadius: '6px', fontWeight: 'bold', cursor: 'pointer', marginTop: '10px' }}>
                                 Save Profile
                             </button>
                             {profileMessage && <div style={{ textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: profileMessage.includes('Error') || profileMessage.includes('failed') ? COLORS.ERROR : COLORS.SUCCESS }}>{profileMessage}</div>}
+                            
+                            {/* NEW: DANGER ZONE */}
+                            <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: `1px solid ${COLORS.ERROR}40`, textAlign: 'center' }}>
+                                <button onClick={handleDeleteAccount} style={{ backgroundColor: 'transparent', color: COLORS.ERROR, border: `1px solid ${COLORS.ERROR}`, padding: '8px 16px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                    Delete Account Permanently
+                                </button>
+                            </div>
                         </div>
                         )}
                     </div>
 
                     <div style={{ textAlign: 'center' }}>
                       <p style={{ fontSize: '12px', color: COLORS.NEUTRAL }}>Signed in as: {user.email}</p>
-                      
                       <div style={{ margin: '20px 0', padding: '15px', backgroundColor: '#F5F5F7', borderRadius: '8px' }}>
                         <p style={{ fontWeight: 'bold', marginBottom: '15px' }}>Data Synchronization</p>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -829,7 +822,6 @@ export default function MasterController() {
                         </div>
                         {syncMessage && <p style={{ color: syncMessage.includes('Fail') ? COLORS.ERROR : COLORS.SUCCESS, fontWeight: 'bold', marginTop: '10px', fontSize: '13px' }}>{syncMessage}</p>}
                       </div>
-
                       <button onClick={() => signOut(auth)} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '10px 20px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign Out</button>
                     </div>
                   </div>
@@ -839,10 +831,39 @@ export default function MasterController() {
                     <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
                     <form onSubmit={() => handleAuth(!isLoginView ? false : true)} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
-                      <input type="password" placeholder="Password" value={password} onChange={e => setPassword(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
+                      
+                      {/* NEW: PASSWORD FIELD WITH TOGGLE */}
+                      <div style={{ position: 'relative' }}>
+                        <input 
+                            type={showPassword ? "text" : "password"} 
+                            placeholder="Password" 
+                            value={password} 
+                            onChange={e => setPassword(e.target.value)} 
+                            style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, width: '100%', boxSizing: 'border-box' }} 
+                            required 
+                        />
+                        <button 
+                            type="button"
+                            onClick={() => setShowPassword(!showPassword)}
+                            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: '16px' }}
+                        >
+                            {showPassword ? '👁️' : '🔒'}
+                        </button>
+                      </div>
+
                       <button type="submit" onClick={(e) => { e.preventDefault(); handleAuth(isLoginView); }} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'Login' : 'Sign Up'}</button>
                     </form>
+                    
+                    {/* NEW: FORGOT PASSWORD */}
+                    {isLoginView && (
+                        <div style={{ textAlign: 'center' }}>
+                            <button onClick={handlePasswordReset} style={{ background: 'none', border: 'none', color: COLORS.NEUTRAL, fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>Forgot Password?</button>
+                        </div>
+                    )}
+
                     <div onClick={() => setIsLoginView(!isLoginView)} style={{ textAlign: 'center', fontSize: '12px', cursor: 'pointer', color: COLORS.SECONDARY }}>{isLoginView ? 'Need an account? Sign up' : 'Have an account? Log in'}</div>
+                    
+                    {authMessage && <div style={{ color: COLORS.ERROR, textAlign: 'center', fontSize: '13px', marginTop: '10px' }}>{authMessage}</div>}
                   </div>
                 )}
               </div>

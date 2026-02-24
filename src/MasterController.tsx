@@ -136,7 +136,10 @@ export default function MasterController() {
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
+  
+  // GLOBAL LOADING
   const [loading, setLoading] = useState(false);
+  
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
 
   const [user, setUser] = useState<User | null>(null);
@@ -144,7 +147,6 @@ export default function MasterController() {
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
   
-  // NEW: UI State for Password Visibility & Recovery
   const [showPassword, setShowPassword] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
 
@@ -158,8 +160,10 @@ export default function MasterController() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
+  // COMMUNITY STATE
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityResults, setCommunityResults] = useState<UserProfile[]>([]);
+  const [isSearchingCommunity, setIsSearchingCommunity] = useState(false); // NEW LOCAL LOADING STATE
 
   useEffect(() => {
     if (showSplash) {
@@ -258,16 +262,12 @@ export default function MasterController() {
     if (confirmDelete !== 'DELETE') return;
 
     try {
-        // Optional: Clean up Firestore data before deleting user
-        // Note: Real-world apps usually use a Cloud Function for this to be cleaner
         await deleteDoc(doc(db, "users", user.uid));
         if (profile.username) {
             await deleteDoc(doc(db, "usernames", profile.username));
         }
-        
         await deleteUser(user);
         alert("Account deleted.");
-        // App will auto-redirect to login via onAuthStateChanged
     } catch (error: any) {
         if (error.code === 'auth/requires-recent-login') {
             alert("Security Check: You must log out and log back in to delete your account.");
@@ -344,7 +344,7 @@ export default function MasterController() {
         setCommunityResults([]);
         return;
     }
-    setLoading(true);
+    setIsSearchingCommunity(true); // USE LOCAL LOADING STATE
     try {
         const lowerQ = queryStr.toLowerCase().trim();
         const usersRef = collection(db, "users");
@@ -361,7 +361,7 @@ export default function MasterController() {
         });
         setCommunityResults(fetchedUsers);
     } catch (error) { console.error("Error searching community:", error); }
-    setLoading(false);
+    setIsSearchingCommunity(false); // END LOCAL LOADING STATE
   };
 
   const toggleFollow = async (targetUid: string) => {
@@ -540,69 +540,6 @@ export default function MasterController() {
 
         {!loading && !showSplash && (
           <>
-            {/* ... SEARCH and PLAYLIST views remain unchanged ... */}
-            {currentView.type === 'SEARCH' && (
-              <div style={{ paddingBottom: '60px' }}>
-                <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-                  <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
-                  <button type="submit" disabled={loading} style={{ padding: '12px 20px', backgroundColor: loading ? COLORS.NEUTRAL : COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold' }}>Go</button>
-                </form>
-                {recentSearches.length > 0 && results.length === 0 && (
-                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
-                    {recentSearches.map(s => <button key={s} onClick={() => { setQueryInput(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
-                  </div>
-                )}
-                {results.length > 0 && <FilterComponent />}
-                {paginatedList.map(d => (
-                  <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
-                  </div>
-                ))}
-                {displayList.length > itemsPerPage && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
-                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages || 1}</span>
-                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {currentView.type === 'PLAYLISTS_LIST' && (
-              <div>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold' }}>+</button></div>
-                {Object.keys(playlists).map(name => (
-                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
-                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px' }}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {currentView.type === 'PLAYLIST_DETAIL' && (
-              <div>
-                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
-                <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
-                {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
-                {playlists[currentView.name] ? paginatedList.map(d => (
-                  <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
-                    <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px' }}>Remove</button>
-                  </div>
-                )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
-                {displayList.length > itemsPerPage && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
-                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages || 1}</span>
-                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
-                  </div>
-                )}
-              </div>
-            )}
-
             {currentView.type === 'DANCE_PROFILE' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
@@ -638,10 +575,77 @@ export default function MasterController() {
               </div>
             )}
 
+            {currentView.type === 'SEARCH' && (
+              <div style={{ paddingBottom: '60px' }}>
+                <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
+                  <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
+                  <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', cursor: 'pointer' }}>Go</button>
+                </form>
+                {recentSearches.length > 0 && results.length === 0 && (
+                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
+                    {recentSearches.map(s => <button key={s} onClick={() => { setQueryInput(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
+                  </div>
+                )}
+                
+                {results.length > 0 && <FilterComponent />}
+                
+                {paginatedList.map(d => (
+                  <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
+                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
+                  </div>
+                ))}
+                {displayList.length > itemsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
+                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
+                    <span>Page {currentPage} of {totalPages || 1}</span>
+                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {currentView.type === 'PLAYLISTS_LIST' && (
+              <div>
+                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold', cursor: 'pointer' }}>+</button></div>
+                {Object.keys(playlists).map(name => (
+                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                    <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
+                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px', cursor: 'pointer' }}>×</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {currentView.type === 'PLAYLIST_DETAIL' && (
+              <div>
+                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
+                <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
+                
+                {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
+                
+                {playlists[currentView.name] ? paginatedList.map(d => (
+                  <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
+                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
+                    <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px', cursor: 'pointer' }}>Remove</button>
+                  </div>
+                )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
+                
+                {displayList.length > itemsPerPage && (
+                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
+                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
+                    <span>Page {currentPage} of {totalPages || 1}</span>
+                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
+                  </div>
+                )}
+              </div>
+            )}
+
             {currentView.type === 'COMMUNITY' && (
               <div>
                 <h2 style={{ color: COLORS.PRIMARY, textAlign: 'center', marginBottom: '20px' }}>Find Dancers</h2>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '20px' }}>
+                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
                   <input 
                     value={communityQuery} 
                     onChange={e => handleUserSearch(e.target.value)} 
@@ -650,11 +654,16 @@ export default function MasterController() {
                   />
                 </div>
                 
-                {communityResults.length === 0 && communityQuery && !loading && (
-                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL }}>No users found matching "@{communityQuery}"</div>
+                {/* LOCAL LOADING SPINNER */}
+                {isSearchingCommunity && (
+                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, fontSize: '12px', marginBottom: '10px' }}>Searching...</div>
+                )}
+                
+                {communityResults.length === 0 && communityQuery && !isSearchingCommunity && (
+                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, marginTop: '10px' }}>No users found matching "@{communityQuery}"</div>
                 )}
 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
                     {communityResults.map(targetUser => (
                         <div key={targetUser.uid} onClick={() => setCurrentView({ type: 'OTHER_PROFILE', targetProfile: targetUser })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '15px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
                             {targetUser.photoUrl ? (
@@ -802,7 +811,6 @@ export default function MasterController() {
                             </button>
                             {profileMessage && <div style={{ textAlign: 'center', fontSize: '13px', fontWeight: 'bold', color: profileMessage.includes('Error') || profileMessage.includes('failed') ? COLORS.ERROR : COLORS.SUCCESS }}>{profileMessage}</div>}
                             
-                            {/* NEW: DANGER ZONE */}
                             <div style={{ marginTop: '30px', paddingTop: '20px', borderTop: `1px solid ${COLORS.ERROR}40`, textAlign: 'center' }}>
                                 <button onClick={handleDeleteAccount} style={{ backgroundColor: 'transparent', color: COLORS.ERROR, border: `1px solid ${COLORS.ERROR}`, padding: '8px 16px', borderRadius: '6px', fontSize: '12px', cursor: 'pointer' }}>
                                     Delete Account Permanently
@@ -827,12 +835,11 @@ export default function MasterController() {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '15px' }}>
-                    <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold' }}>Sign in with Google</button>
+                    <button onClick={handleGoogle} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '15px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>Sign in with Google</button>
                     <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}40`, margin: '10px 0' }}></div>
                     <form onSubmit={() => handleAuth(!isLoginView ? false : true)} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       <input type="email" placeholder="Email" value={email} onChange={e => setEmail(e.target.value)} style={{ padding: '12px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}` }} required />
                       
-                      {/* NEW: PASSWORD FIELD WITH TOGGLE */}
                       <div style={{ position: 'relative' }}>
                         <input 
                             type={showPassword ? "text" : "password"} 
@@ -851,10 +858,9 @@ export default function MasterController() {
                         </button>
                       </div>
 
-                      <button type="submit" onClick={(e) => { e.preventDefault(); handleAuth(isLoginView); }} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold' }}>{isLoginView ? 'Login' : 'Sign Up'}</button>
+                      <button type="submit" onClick={(e) => { e.preventDefault(); handleAuth(isLoginView); }} style={{ backgroundColor: 'transparent', color: COLORS.PRIMARY, border: `2px solid ${COLORS.PRIMARY}`, padding: '12px', borderRadius: '8px', fontWeight: 'bold', cursor: 'pointer' }}>{isLoginView ? 'Login' : 'Sign Up'}</button>
                     </form>
                     
-                    {/* NEW: FORGOT PASSWORD */}
                     {isLoginView && (
                         <div style={{ textAlign: 'center' }}>
                             <button onClick={handlePasswordReset} style={{ background: 'none', border: 'none', color: COLORS.NEUTRAL, fontSize: '12px', cursor: 'pointer', textDecoration: 'underline' }}>Forgot Password?</button>

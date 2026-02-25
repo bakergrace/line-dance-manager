@@ -10,7 +10,7 @@ import {
 import type { User } from "firebase/auth"; 
 import { GoogleAuthProvider } from "firebase/auth";
 import { 
-  getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc
+  getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc, addDoc, updateDoc, arrayUnion, arrayRemove, orderBy
 } from "firebase/firestore"; 
 import { 
   getStorage, ref, uploadBytes, getDownloadURL 
@@ -70,11 +70,34 @@ export interface UserProfile {
   location: string; 
   photoUrl: string;
   following: string[];
-  followers: string[]; // PHASE 3: Added followers array
+  followers: string[]; 
 }
 
-type ReturnPath = { type: 'SEARCH' } | { type: 'PLAYLIST_DETAIL'; name: string } | { type: 'COMMUNITY' };
+// FEED INTERFACES
+export interface PostComment {
+  id: string;
+  uid: string;
+  username: string;
+  photoUrl: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface Post {
+  id: string;
+  authorUid: string;
+  authorUsername: string;
+  authorPhotoUrl: string;
+  content: string;
+  visibility: 'public' | 'followers' | 'friends' | 'private';
+  likes: string[]; // Array of UIDs
+  comments: PostComment[];
+  createdAt: number;
+}
+
+type ReturnPath = { type: 'SEARCH' } | { type: 'PLAYLIST_DETAIL'; name: string } | { type: 'COMMUNITY' } | { type: 'HOME' };
 type AppView = 
+  | { type: 'HOME' } // NEW DEFAULT VIEW
   | { type: 'SEARCH' } 
   | { type: 'PLAYLISTS_LIST' } 
   | { type: 'PLAYLIST_DETAIL'; name: string } 
@@ -82,7 +105,7 @@ type AppView =
   | { type: 'COMMUNITY' }
   | { type: 'OTHER_PROFILE'; targetProfile: UserProfile }
   | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath }
-  | { type: 'USER_LIST'; listTitle: string; uids: string[]; returnPath: AppView }; // PHASE 3: Added User List View
+  | { type: 'USER_LIST'; listTitle: string; uids: string[]; returnPath: AppView }; 
 
 // --- DATA SANITIZERS ---
 const cleanTitle = (title: string | undefined) => title ? String(title).replace(/\s*\([^)]*\)$/, '').trim() : "Untitled";
@@ -126,10 +149,13 @@ const DifficultyLegend = () => (
 // --- MAIN CONTROLLER ---
 export default function MasterController() {
   const [showSplash, setShowSplash] = useState(true);
-  const [currentView, setCurrentView] = useState<AppView>({ type: 'SEARCH' });
+  const [currentView, setCurrentView] = useState<AppView>({ type: 'HOME' }); // Defaults to Home now
+  
+  // Search State
   const [queryInput, setQueryInput] = useState('');
   const [results, setResults] = useState<Dance[]>([]);
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
+  const [isSearchingDances, setIsSearchingDances] = useState(false);
   
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
@@ -138,37 +164,40 @@ export default function MasterController() {
 
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
-  
   const [loading, setLoading] = useState(false);
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
 
+  // Auth State
   const [user, setUser] = useState<User | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoginView, setIsLoginView] = useState(true);
-  
   const [showPassword, setShowPassword] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
 
+  // Profile & Playlists
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(DEFAULT_PLAYLISTS);
   const [newPlaylistName, setNewPlaylistName] = useState('');
-
-  // PHASE 3: Ensure followers array is defined in default state
   const [profile, setProfile] = useState<UserProfile>({ username: '', firstName: '', lastName: '', bio: '', location: '', photoUrl: '', following: [], followers: [] });
   const [usernameStatus, setUsernameStatus] = useState<'idle' | 'checking' | 'available' | 'taken'>('idle');
   const [profileMessage, setProfileMessage] = useState<string | null>(null);
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  // COMMUNITY STATE
+  // Community
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityResults, setCommunityResults] = useState<UserProfile[]>([]);
   const [isSearchingCommunity, setIsSearchingCommunity] = useState(false);
-
-  // PHASE 3: State for Follower/Following Lists
   const [userListResults, setUserListResults] = useState<UserProfile[]>([]);
   const [isLoadingUserList, setIsLoadingUserList] = useState(false);
+
+  // Feed State
+  const [feedPosts, setFeedPosts] = useState<Post[]>([]);
+  const [newPostContent, setNewPostContent] = useState('');
+  const [newPostVisibility, setNewPostVisibility] = useState<'public' | 'followers' | 'friends' | 'private'>('public');
+  const [isPosting, setIsPosting] = useState(false);
+  const [commentInputs, setCommentInputs] = useState<{[postId: string]: string}>({});
 
   useEffect(() => {
     if (showSplash) {
@@ -206,7 +235,6 @@ export default function MasterController() {
             localStorage.setItem(STORAGE_KEYS.PERMANENT, JSON.stringify(cleaned));
         }
         if (data.profile) {
-            // PHASE 3: Make sure we map followers too
             setProfile({ ...data.profile, following: data.profile.following || [], followers: data.profile.followers || [] });
             if (data.profile.username) setIsEditingProfile(false);
         } else {
@@ -234,6 +262,115 @@ export default function MasterController() {
       console.error(error); setSyncMessage(`Upload Failed: ${error.message}`);
     }
     setTimeout(() => setSyncMessage(null), 3000);
+  };
+
+  // --- FEED LOGIC ---
+  const fetchFeed = async () => {
+    if (!user) return;
+    setLoading(true);
+    try {
+      const postsRef = collection(db, "posts");
+      const q = query(postsRef, orderBy("createdAt", "desc"));
+      const querySnapshot = await getDocs(q);
+      
+      const fetchedPosts: Post[] = [];
+      querySnapshot.forEach((docSnap) => {
+        const data = docSnap.data() as Post;
+        data.id = docSnap.id;
+        
+        // PRIVACY FILTERING
+        let canView = false;
+        const isAuthor = data.authorUid === user.uid;
+        const isFollowingAuthor = profile.following.includes(data.authorUid);
+        const isMutual = isFollowingAuthor && profile.followers.includes(data.authorUid);
+
+        if (isAuthor) canView = true;
+        else if (data.visibility === 'public') canView = true;
+        else if (data.visibility === 'followers' && isFollowingAuthor) canView = true;
+        else if (data.visibility === 'friends' && isMutual) canView = true;
+
+        if (canView) fetchedPosts.push(data);
+      });
+      
+      setFeedPosts(fetchedPosts);
+    } catch (error) {
+      console.error("Error fetching feed:", error);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    if (user && currentView.type === 'HOME') {
+      fetchFeed();
+    }
+  }, [user, currentView.type]);
+
+  const handleCreatePost = async () => {
+    if (!user || !newPostContent.trim()) return;
+    setIsPosting(true);
+    try {
+      const newPost: Omit<Post, 'id'> = {
+        authorUid: user.uid,
+        authorUsername: profile.username || 'User',
+        authorPhotoUrl: profile.photoUrl || '',
+        content: newPostContent.trim(),
+        visibility: newPostVisibility,
+        likes: [],
+        comments: [],
+        createdAt: Date.now()
+      };
+      
+      await addDoc(collection(db, "posts"), newPost);
+      setNewPostContent('');
+      fetchFeed(); // Refresh the feed
+    } catch (error) {
+      console.error("Error creating post:", error);
+      alert("Failed to create post.");
+    }
+    setIsPosting(false);
+  };
+
+  const handleLikePost = async (postId: string, currentLikes: string[]) => {
+    if (!user) return;
+    const postRef = doc(db, "posts", postId);
+    const hasLiked = currentLikes.includes(user.uid);
+    
+    try {
+      if (hasLiked) {
+        await updateDoc(postRef, { likes: arrayRemove(user.uid) });
+        setFeedPosts(feedPosts.map(p => p.id === postId ? { ...p, likes: p.likes.filter(id => id !== user.uid) } : p));
+      } else {
+        await updateDoc(postRef, { likes: arrayUnion(user.uid) });
+        setFeedPosts(feedPosts.map(p => p.id === postId ? { ...p, likes: [...p.likes, user.uid] } : p));
+      }
+    } catch (error) {
+      console.error("Error liking post:", error);
+    }
+  };
+
+  const handleAddComment = async (postId: string) => {
+    if (!user || !commentInputs[postId]?.trim()) return;
+    const commentText = commentInputs[postId].trim();
+    
+    const newComment: PostComment = {
+      id: Math.random().toString(36).substr(2, 9),
+      uid: user.uid,
+      username: profile.username || 'User',
+      photoUrl: profile.photoUrl || '',
+      text: commentText,
+      timestamp: Date.now()
+    };
+
+    try {
+      const postRef = doc(db, "posts", postId);
+      await updateDoc(postRef, { comments: arrayUnion(newComment) });
+      
+      // Update local state
+      setFeedPosts(feedPosts.map(p => p.id === postId ? { ...p, comments: [...p.comments, newComment] } : p));
+      setCommentInputs({ ...commentInputs, [postId]: '' }); // Clear input
+    } catch (error) {
+      console.error("Error adding comment:", error);
+    }
   };
 
   // --- AUTH FEATURES ---
@@ -370,13 +507,10 @@ export default function MasterController() {
     setIsSearchingCommunity(false);
   };
 
-  // PHASE 3: Updated to update BOTH users' arrays
   const toggleFollow = async (targetUid: string) => {
     if (!user || !targetUid) return;
-    
     const isCurrentlyFollowing = profile.following.includes(targetUid);
     
-    // 1. Update Current User's 'Following' List locally and in cloud
     let updatedFollowing = [...profile.following];
     if (isCurrentlyFollowing) {
         updatedFollowing = updatedFollowing.filter(id => id !== targetUid);
@@ -387,7 +521,6 @@ export default function MasterController() {
     setProfile(updatedProfile); 
     await pushToCloud(playlists, updatedProfile, user); 
     
-    // 2. Update Target User's 'Followers' List in cloud
     try {
       const targetDocRef = doc(db, "users", targetUid);
       const targetSnap = await getDoc(targetDocRef);
@@ -403,17 +536,13 @@ export default function MasterController() {
         }
         await setDoc(targetDocRef, { profile: { ...targetProfile, followers: targetFollowers } }, { merge: true });
         
-        // If we are currently viewing this user, instantly update the UI count
         if (currentView.type === 'OTHER_PROFILE' && currentView.targetProfile.uid === targetUid) {
           setCurrentView({ type: 'OTHER_PROFILE', targetProfile: { ...targetProfile, followers: targetFollowers, uid: targetUid }});
         }
       }
-    } catch (error) {
-      console.error("Error updating target user's followers list", error);
-    }
+    } catch (error) { console.error("Error updating target user's followers list", error); }
   };
 
-  // PHASE 3: Fetching user profiles based on a list of UIDs
   const loadUserList = async (title: string, uids: string[], returnPath: AppView) => {
     setCurrentView({ type: 'USER_LIST', listTitle: title, uids, returnPath });
     setIsLoadingUserList(true);
@@ -426,7 +555,6 @@ export default function MasterController() {
 
     try {
       const fetchedUsers: UserProfile[] = [];
-      // Fetch users individually by UID
       const promises = uids.map(id => getDoc(doc(db, "users", id)));
       const snaps = await Promise.all(promises);
       
@@ -436,9 +564,7 @@ export default function MasterController() {
          }
       });
       setUserListResults(fetchedUsers);
-    } catch (e) {
-      console.error("Error loading user list:", e);
-    }
+    } catch (e) { console.error("Error loading user list:", e); }
     setIsLoadingUserList(false);
   };
 
@@ -503,6 +629,7 @@ export default function MasterController() {
     if (currentView.type === 'DANCE_PROFILE') {
       const path = currentView.returnPath;
       if (path.type === 'SEARCH') setCurrentView({ type: 'SEARCH' });
+      else if (path.type === 'HOME') setCurrentView({ type: 'HOME' });
       else if (path.type === 'COMMUNITY') setCurrentView({ type: 'COMMUNITY' });
       else if (path.type === 'PLAYLIST_DETAIL') {
         if (playlists[path.name]) setCurrentView({ type: 'PLAYLIST_DETAIL', name: path.name });
@@ -510,7 +637,7 @@ export default function MasterController() {
       }
     } else if (currentView.type === 'PLAYLIST_DETAIL') navigateTo({ type: 'PLAYLISTS_LIST' });
     else if (currentView.type === 'OTHER_PROFILE') navigateTo({ type: 'COMMUNITY' });
-    else if (currentView.type === 'USER_LIST') setCurrentView(currentView.returnPath); // PHASE 3: Added back logic
+    else if (currentView.type === 'USER_LIST') setCurrentView(currentView.returnPath);
   };
 
   const loadDanceDetails = async (rawDance: any, source: ReturnPath) => {
@@ -534,7 +661,7 @@ export default function MasterController() {
 
   const handleSearch = async (searchQuery: string) => {
     if (!searchQuery) return;
-    setLoading(true); setCurrentPage(1); setFilterDiff('all');
+    setIsSearchingDances(true); setCurrentPage(1); setFilterDiff('all');
     const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
     setRecentSearches(updatedRecents); localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
     try {
@@ -543,7 +670,7 @@ export default function MasterController() {
       const data = await res.json();
       if ((data.items || []).length === 0) alert("No results found.");
       setResults((data.items || []).map((item: any) => normalizeDanceData(item)));
-    } catch (err) { console.error(err); alert("Search failed. Check connection."); } finally { setLoading(false); }
+    } catch (err) { console.error(err); alert("Search failed. Check connection."); } finally { setIsSearchingDances(false); }
   };
 
   const applyFiltersAndSort = (list: Dance[]) => {
@@ -566,7 +693,7 @@ export default function MasterController() {
   );
 
   let displayList: Dance[] = [];
-  if (currentView.type === 'SEARCH') displayList = applyFiltersAndSort(results);
+  if (currentView.type === 'HOME' || currentView.type === 'SEARCH') displayList = applyFiltersAndSort(results);
   if (currentView.type === 'PLAYLIST_DETAIL') displayList = applyFiltersAndSort(playlists[currentView.name] || []);
 
   const indexOfLastItem = currentPage * itemsPerPage;
@@ -591,7 +718,7 @@ export default function MasterController() {
           <img src={isMobile ? bootstepperMobileLogo : bootstepperLogo} alt="logo" style={{ maxHeight: isMobile ? '120px' : '180px', width: 'auto', margin: '0 auto', display: 'block' }} />
           {currentView.type !== 'DANCE_PROFILE' && currentView.type !== 'USER_LIST' && (
             <div style={{ display: 'flex', justifyContent: 'center', marginTop: '10px', gap: '5px' }}>
-              <button onClick={() => navigateTo({ type: 'SEARCH' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'SEARCH' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Search</button>
+              <button onClick={() => navigateTo({ type: 'HOME' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'HOME' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Home</button>
               <button onClick={() => navigateTo({ type: 'PLAYLISTS_LIST' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'PLAYLISTS_LIST' || currentView.type === 'PLAYLIST_DETAIL' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Playlists</button>
               {user && <button onClick={() => navigateTo({ type: 'COMMUNITY' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'COMMUNITY' || currentView.type === 'OTHER_PROFILE' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Community</button>}
               <button onClick={() => navigateTo({ type: 'ACCOUNT' })} style={{ padding: '8px 12px', background: 'none', border: 'none', borderBottom: currentView.type === 'ACCOUNT' ? `3px solid ${COLORS.SECONDARY}` : 'none', color: COLORS.PRIMARY, fontWeight: 'bold', cursor: 'pointer', fontSize: isMobile ? '13px' : '16px' }}>Account</button>
@@ -605,6 +732,154 @@ export default function MasterController() {
 
         {!loading && !showSplash && (
           <>
+            {/* NEW HOME / ACTIVITY FEED VIEW */}
+            {currentView.type === 'HOME' && (
+              <div style={{ paddingBottom: '60px' }}>
+                {/* 1. The Unified Search Bar at Top of Home */}
+                <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
+                    <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center' }}>
+                    <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances to learn..." style={{ padding: '12px', width: '100%', maxWidth: '400px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
+                    <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', cursor: 'pointer' }}>Search</button>
+                    </form>
+                    
+                    {isSearchingDances && <div style={{ textAlign: 'center', marginTop: '10px', color: COLORS.NEUTRAL }}>Searching database...</div>}
+                    
+                    {/* Inline Search Results inside Home */}
+                    {results.length > 0 && (
+                        <div style={{ marginTop: '20px', borderTop: `1px solid #EEE`, paddingTop: '15px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                                <h3 style={{ margin: 0, color: COLORS.PRIMARY }}>Search Results</h3>
+                                <button onClick={() => setResults([])} style={{ background: 'none', border: 'none', color: COLORS.NEUTRAL, cursor: 'pointer', textDecoration: 'underline' }}>Clear</button>
+                            </div>
+                            {paginatedList.map(d => (
+                                <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'HOME' })} style={{ backgroundColor: '#F9F9F9', padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', border: '1px solid #EEE' }}>
+                                <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
+                                <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+
+                {/* 2. The Post Composer */}
+                {user && profile.username && (
+                    <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
+                        <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-start' }}>
+                            {profile.photoUrl ? (
+                                <img src={profile.photoUrl} alt="Profile" style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+                            ) : (
+                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>👤</div>
+                            )}
+                            <div style={{ flex: 1 }}>
+                                <textarea 
+                                    value={newPostContent}
+                                    onChange={(e) => setNewPostContent(e.target.value)}
+                                    placeholder="What are you dancing to today?"
+                                    style={{ width: '100%', minHeight: '80px', padding: '10px', borderRadius: '8px', border: '1px solid #CCC', resize: 'vertical', fontFamily: 'inherit', boxSizing: 'border-box', marginBottom: '10px' }}
+                                />
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <select 
+                                        value={newPostVisibility} 
+                                        onChange={(e: any) => setNewPostVisibility(e.target.value)}
+                                        style={{ padding: '6px 10px', borderRadius: '4px', border: '1px solid #CCC', fontSize: '12px', outline: 'none' }}
+                                    >
+                                        <option value="public">🌐 Public</option>
+                                        <option value="followers">👥 Followers Only</option>
+                                        <option value="friends">🤝 Mutual Friends</option>
+                                        <option value="private">🔒 Private (Just Me)</option>
+                                    </select>
+                                    <button 
+                                        onClick={handleCreatePost}
+                                        disabled={!newPostContent.trim() || isPosting}
+                                        style={{ backgroundColor: newPostContent.trim() && !isPosting ? COLORS.PRIMARY : '#CCC', color: COLORS.WHITE, border: 'none', padding: '8px 20px', borderRadius: '20px', fontWeight: 'bold', cursor: newPostContent.trim() && !isPosting ? 'pointer' : 'default' }}
+                                    >
+                                        {isPosting ? 'Posting...' : 'Post'}
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* 3. The Activity Feed */}
+                <div>
+                    <h3 style={{ color: COLORS.PRIMARY, borderBottom: '2px solid #EEE', paddingBottom: '10px', marginBottom: '15px' }}>Activity Feed</h3>
+                    {!user ? (
+                        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: COLORS.WHITE, borderRadius: '12px', color: COLORS.NEUTRAL }}>Please log in to see the community feed.</div>
+                    ) : feedPosts.length === 0 ? (
+                        <div style={{ textAlign: 'center', padding: '40px', backgroundColor: COLORS.WHITE, borderRadius: '12px', color: COLORS.NEUTRAL }}>No posts yet. Be the first to share!</div>
+                    ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            {feedPosts.map(post => (
+                                <div key={post.id} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
+                                    {/* Post Header */}
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
+                                        {post.authorPhotoUrl ? (
+                                            <img src={post.authorPhotoUrl} alt={post.authorUsername} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
+                                        ) : (
+                                            <div style={{ width: '40px', height: '40px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '18px' }}>👤</div>
+                                        )}
+                                        <div>
+                                            <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>@{post.authorUsername}</div>
+                                            <div style={{ fontSize: '11px', color: COLORS.NEUTRAL }}>
+                                                {new Date(post.createdAt).toLocaleDateString()} • {post.visibility === 'public' ? '🌐 Public' : post.visibility === 'followers' ? '👥 Followers' : post.visibility === 'friends' ? '🤝 Friends' : '🔒 Private'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Post Content */}
+                                    <div style={{ fontSize: '15px', color: '#333', marginBottom: '15px', lineHeight: '1.5' }}>
+                                        {post.content}
+                                    </div>
+
+                                    {/* Post Actions */}
+                                    <div style={{ display: 'flex', gap: '20px', borderTop: '1px solid #EEE', paddingTop: '10px', borderBottom: '1px solid #EEE', paddingBottom: '10px' }}>
+                                        <button 
+                                            onClick={() => handleLikePost(post.id, post.likes)}
+                                            style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '5px', color: post.likes.includes(user.uid) ? COLORS.SECONDARY : COLORS.NEUTRAL, fontWeight: post.likes.includes(user.uid) ? 'bold' : 'normal' }}
+                                        >
+                                            {post.likes.includes(user.uid) ? '❤️' : '🤍'} {post.likes.length} Likes
+                                        </button>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', color: COLORS.NEUTRAL }}>
+                                            💬 {post.comments?.length || 0} Comments
+                                        </div>
+                                    </div>
+
+                                    {/* Comments Section */}
+                                    <div style={{ marginTop: '15px' }}>
+                                        {(post.comments || []).map(comment => (
+                                            <div key={comment.id} style={{ display: 'flex', gap: '10px', marginBottom: '10px', backgroundColor: '#F9F9F9', padding: '10px', borderRadius: '8px' }}>
+                                                <div style={{ fontWeight: 'bold', fontSize: '13px', color: COLORS.PRIMARY }}>@{comment.username}:</div>
+                                                <div style={{ fontSize: '13px', color: '#444' }}>{comment.text}</div>
+                                            </div>
+                                        ))}
+                                        
+                                        {/* Add Comment */}
+                                        <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                                            <input 
+                                                value={commentInputs[post.id] || ''}
+                                                onChange={e => setCommentInputs({ ...commentInputs, [post.id]: e.target.value })}
+                                                placeholder="Write a comment..."
+                                                style={{ flex: 1, padding: '8px 12px', borderRadius: '20px', border: '1px solid #CCC', outline: 'none', fontSize: '13px' }}
+                                            />
+                                            <button 
+                                                onClick={() => handleAddComment(post.id)}
+                                                disabled={!commentInputs[post.id]?.trim()}
+                                                style={{ background: 'none', border: 'none', color: commentInputs[post.id]?.trim() ? COLORS.PRIMARY : '#CCC', fontWeight: 'bold', cursor: commentInputs[post.id]?.trim() ? 'pointer' : 'default' }}
+                                            >
+                                                Post
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+              </div>
+            )}
+
             {/* PHASE 3: New User List Screen */}
             {currentView.type === 'USER_LIST' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
@@ -667,37 +942,6 @@ export default function MasterController() {
                   </div>
                   {currentView.dance.originalStepSheetUrl && <div style={{ marginTop: '20px', textAlign: 'center' }}><a href={currentView.dance.originalStepSheetUrl} target="_blank" rel="noreferrer" style={{ color: COLORS.PRIMARY, fontWeight: 'bold' }}>View Original Sheet ↗</a></div>}
                 </div>
-              </div>
-            )}
-
-            {currentView.type === 'SEARCH' && (
-              <div style={{ paddingBottom: '60px' }}>
-                <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-                  <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances..." style={{ padding: '12px', width: '250px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
-                  <button type="submit" style={{ padding: '12px 20px', backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', borderRadius: '0 4px 4px 0', fontWeight: 'bold', cursor: 'pointer' }}>Go</button>
-                </form>
-                {recentSearches.length > 0 && results.length === 0 && (
-                  <div style={{ textAlign: 'center', marginBottom: '20px' }}>
-                    <span style={{ fontSize: '12px', color: COLORS.SECONDARY, marginRight: '10px' }}>Recent:</span>
-                    {recentSearches.map(s => <button key={s} onClick={() => { setQueryInput(s); handleSearch(s); }} style={{ background: 'none', border: 'none', color: COLORS.PRIMARY, textDecoration: 'underline', cursor: 'pointer', margin: '0 5px', fontSize: '13px' }}>{s}</button>)}
-                  </div>
-                )}
-                
-                {results.length > 0 && <FilterComponent />}
-                
-                {paginatedList.map(d => (
-                  <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'SEARCH' })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '10px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem' }}>{d.title}</div><div style={{ fontSize: '13px', color: COLORS.SECONDARY }}>{d.songTitle} — {d.songArtist}</div></div>
-                    <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
-                  </div>
-                ))}
-                {displayList.length > itemsPerPage && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
-                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages || 1}</span>
-                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
-                  </div>
-                )}
               </div>
             )}
 
@@ -789,7 +1033,6 @@ export default function MasterController() {
                     )}
                     <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (currentView.targetProfile.firstName || currentView.targetProfile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{currentView.targetProfile.username}</p>
                     
-                    {/* PHASE 3: Clickable Stats for Other Profiles */}
                     <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '15px', color: COLORS.NEUTRAL, fontSize: '14px' }}>
                         <div onClick={() => loadUserList(`${currentView.targetProfile.firstName || 'User'}'s Followers`, currentView.targetProfile.followers || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
                             <strong style={{ color: COLORS.PRIMARY }}>{currentView.targetProfile.followers?.length || 0}</strong> Followers
@@ -844,7 +1087,6 @@ export default function MasterController() {
                                 )}
                                 <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (profile.firstName || profile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{profile.username}</p>
                                 
-                                {/* PHASE 3: Clickable Stats for Your Account */}
                                 <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '15px', color: COLORS.NEUTRAL, fontSize: '14px' }}>
                                     <div onClick={() => loadUserList("Followers", profile.followers || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
                                         <strong style={{ color: COLORS.PRIMARY }}>{profile.followers?.length || 0}</strong> Followers
@@ -990,7 +1232,7 @@ export default function MasterController() {
           </>
         )}
       </div>
-      {currentView.type === 'SEARCH' && !loading && <div style={{ position: 'fixed', bottom: 0, width: '100%', zIndex: 100 }}><DifficultyLegend /></div>}
+      {(currentView.type === 'HOME' || currentView.type === 'SEARCH') && !loading && <div style={{ position: 'fixed', bottom: 0, width: '100%', zIndex: 100 }}><DifficultyLegend /></div>}
     </div>
   );
 }

@@ -33,13 +33,16 @@ export interface PostComment {
 }
 
 export interface Post {
-  id: string;
+  id?: string;
   authorUid: string;
   authorUsername: string;
   authorPhotoUrl: string;
-  content: string;
+  // Change 'content' to optional, and add 'danceData'
+  content?: string; 
+  danceId?: string;
+  danceTitle?: string;
   visibility: 'public' | 'followers' | 'friends' | 'private';
-  likes: string[]; 
+  likes: string[];
   comments: PostComment[];
   createdAt: number;
 }

@@ -1,23 +1,28 @@
 import { useState, useEffect } from 'react';
 
 // --- FIREBASE IMPORTS ---
-import { 
-  signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
-  signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser
-} from "firebase/auth";
+import { signOut, deleteUser } from "firebase/auth";
 import type { User } from "firebase/auth"; 
-import { 
-  doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc, 
-  addDoc, updateDoc, arrayUnion, arrayRemove, orderBy
-} from "firebase/firestore"; 
+import { doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc, addDoc, updateDoc, arrayUnion, arrayRemove, orderBy } from "firebase/firestore"; 
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 // --- INTERNAL APP IMPORTS ---
-import { auth, db, storage, googleProvider } from './firebaseSetup';
+import { auth, db, storage } from './firebaseSetup';
 import type { Dance, UserProfile, Post, PostComment, AppView, ReturnPath } from './types';
 import { COLORS, STORAGE_KEYS, DEFAULT_PLAYLISTS, normalizeDanceData } from './utils';
+
+// --- CUSTOM HOOKS ---
+import { useAuth } from './useAuth';
+import { useSearch } from './useSearch';
+
+// --- VIEWS ---
 import { HomeView } from './HomeView'; 
-import { AccountView } from './AccountView'; // <-- NEW IMPORT
+import { AccountView } from './AccountView'; 
+import { CommunityView } from './CommunityView';
+import { OtherProfileView } from './OtherProfileView'; 
+import { UserListView } from './UserListView'; 
+import { DanceProfileView } from './DanceProfileView'; 
+import { PlaylistsView } from './PlaylistsView';       
 
 // --- IMAGES ---
 import bootstepperLogo from './bootstepper-logo.png';
@@ -26,7 +31,6 @@ import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 const BASE_URL = '/api'; 
 
-// --- COMPONENTS OUTSIDE CONTROLLER ---
 const DifficultyLegend = () => (
   <div style={{ display: 'flex', justifyContent: 'center', gap: '12px', padding: '15px', backgroundColor: COLORS.BACKGROUND, borderTop: `1px solid ${COLORS.PRIMARY}20`, flexWrap: 'wrap', fontSize: '11px', color: '#666' }}>
     <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#00BCD4' }} /> Absolute</div>
@@ -37,36 +41,20 @@ const DifficultyLegend = () => (
   </div>
 );
 
-// --- MAIN CONTROLLER ---
 export default function MasterController() {
+  // --- 1. USE CUSTOM HOOKS ---
+  const { user, email, setEmail, password, setPassword, isLoginView, setIsLoginView, showPassword, setShowPassword, authMessage, handleAuth, handleGoogle, handlePasswordReset } = useAuth();
+  const { queryInput, setQueryInput, results, setResults, isSearchingDances, currentPage, setCurrentPage, itemsPerPage, filterDiff, setFilterDiff, sortOrder, setSortOrder, handleSearch, applyFiltersAndSort } = useSearch();
+
+  // --- 2. LOCAL VIEW STATE ---
   const [showSplash, setShowSplash] = useState(true);
   const [currentView, setCurrentView] = useState<AppView>({ type: 'HOME' }); 
-  
-  // Search State
-  const [queryInput, setQueryInput] = useState('');
-  const [results, setResults] = useState<Dance[]>([]);
-  const [recentSearches, setRecentSearches] = useState<string[]>([]);
-  const [isSearchingDances, setIsSearchingDances] = useState(false);
-  
-  const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = 10;
-  const [filterDiff, setFilterDiff] = useState('all');
-  const [sortOrder, setSortOrder] = useState('default');
-
   const [isScrolled, setIsScrolled] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [loading, setLoading] = useState(false);
   const [activeBtn, setActiveBtn] = useState<string | null>(null);
 
-  // Auth State
-  const [user, setUser] = useState<User | null>(null);
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoginView, setIsLoginView] = useState(true);
-  const [showPassword, setShowPassword] = useState(false);
-  const [authMessage, setAuthMessage] = useState<string | null>(null);
-
-  // Profile & Playlists
+  // --- 3. PROFILE & PLAYLIST STATE ---
   const [syncMessage, setSyncMessage] = useState<string | null>(null);
   const [playlists, setPlaylists] = useState<{ [key: string]: Dance[] }>(DEFAULT_PLAYLISTS);
   const [newPlaylistName, setNewPlaylistName] = useState('');
@@ -76,28 +64,21 @@ export default function MasterController() {
   const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
   const [isEditingProfile, setIsEditingProfile] = useState(false);
 
-  // Community
+  // --- 4. COMMUNITY STATE ---
   const [communityQuery, setCommunityQuery] = useState('');
   const [communityResults, setCommunityResults] = useState<UserProfile[]>([]);
   const [isSearchingCommunity, setIsSearchingCommunity] = useState(false);
   const [userListResults, setUserListResults] = useState<UserProfile[]>([]);
   const [isLoadingUserList, setIsLoadingUserList] = useState(false);
 
-  // Feed State
+  // --- 5. FEED STATE ---
   const [feedPosts, setFeedPosts] = useState<Post[]>([]);
   const [newPostContent, setNewPostContent] = useState('');
   const [newPostVisibility, setNewPostVisibility] = useState<'public' | 'followers' | 'friends' | 'private'>('public');
   const [isPosting, setIsPosting] = useState(false);
   const [commentInputs, setCommentInputs] = useState<{[postId: string]: string}>({});
 
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) pullFromCloud(currentUser);
-    });
-    return () => unsubscribeAuth();
-  }, []);
-
+  // --- USE EFFECTS ---
   useEffect(() => {
     const handleScroll = () => setIsScrolled(window.scrollY > 50);
     const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -121,11 +102,10 @@ export default function MasterController() {
         Object.keys(parsed).forEach(key => { cleaned[key] = parsed[key].map((d: any) => normalizeDanceData(d)); });
         setPlaylists(cleaned);
       }
-      const localRecent = localStorage.getItem(STORAGE_KEYS.RECENT_SEARCHES);
-      if (localRecent) setRecentSearches(JSON.parse(localRecent));
     } catch (e) { console.error("Load Error", e); }
   }, []);
 
+  // --- PROFILE LOGIC ---
   const pullFromCloud = async (currentUser: User | null = user) => {
     if (!currentUser) return;
     setSyncMessage("Loading from cloud...");
@@ -157,6 +137,12 @@ export default function MasterController() {
     }
     setTimeout(() => setSyncMessage(null), 3000);
   };
+
+  // Sync profile when user successfully logs in from useAuth hook
+  useEffect(() => {
+    if (user) pullFromCloud(user);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user]);
 
   const pushToCloud = async (playlistsToSave: any, profileToSave: UserProfile, currentUser: User | null = user) => {
     if (!currentUser) return;
@@ -276,32 +262,6 @@ export default function MasterController() {
     }
   };
 
-  // --- AUTH FEATURES ---
-  const handleAuth = async (isLogin: boolean) => {
-    setAuthMessage(null);
-    try {
-      if (isLogin) await signInWithEmailAndPassword(auth, email, password);
-      else await createUserWithEmailAndPassword(auth, email, password);
-    } catch (err: any) { 
-        setAuthMessage(err.message.replace('Firebase:', '').trim()); 
-    }
-  };
-
-  const handleGoogle = async () => { try { await signInWithPopup(auth, googleProvider); } catch (err: any) { setAuthMessage(err.message); } };
-
-  const handlePasswordReset = async () => {
-    if (!email) {
-        setAuthMessage("Please enter your email address first.");
-        return;
-    }
-    try {
-        await sendPasswordResetEmail(auth, email);
-        setAuthMessage("Password reset email sent! Check your inbox.");
-    } catch (error: any) {
-        setAuthMessage("Error sending reset email: " + error.message);
-    }
-  };
-
   const handleDeleteAccount = async () => {
     if (!user) return;
     const confirmDelete = prompt("Type 'DELETE' to permanently delete your account. This cannot be undone.");
@@ -323,7 +283,6 @@ export default function MasterController() {
     }
   };
 
-  // --- PROFILE LOGIC ---
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
@@ -383,7 +342,6 @@ export default function MasterController() {
     setTimeout(() => setProfileMessage(null), 3000);
   };
 
-  // --- COMMUNITY LOGIC ---
   const handleUserSearch = async (queryStr: string) => {
     setCommunityQuery(queryStr);
     if (!queryStr.trim()) {
@@ -547,28 +505,6 @@ export default function MasterController() {
     setLoading(false);
   };
 
-  const handleSearch = async (searchQuery: string) => {
-    if (!searchQuery) return;
-    setIsSearchingDances(true); setCurrentPage(1); setFilterDiff('all');
-    const updatedRecents = [searchQuery, ...recentSearches.filter(s => s !== searchQuery)].slice(0, 5);
-    setRecentSearches(updatedRecents); localStorage.setItem(STORAGE_KEYS.RECENT_SEARCHES, JSON.stringify(updatedRecents));
-    try {
-      const res = await fetch(`${BASE_URL}/dances/search?query=${encodeURIComponent(searchQuery)}&limit=50`, { headers: { 'X-BootStepper-API-Key': API_KEY, 'Content-Type': 'application/json' } });
-      if (!res.ok) throw new Error(`Status: ${res.status}`);
-      const data = await res.json();
-      if ((data.items || []).length === 0) alert("No results found.");
-      setResults((data.items || []).map((item: any) => normalizeDanceData(item)));
-    } catch (err) { console.error(err); alert("Search failed. Check connection."); } finally { setIsSearchingDances(false); }
-  };
-
-  const applyFiltersAndSort = (list: Dance[]) => {
-    let processed = [...list];
-    if (filterDiff !== 'all') processed = processed.filter(d => d.difficultyLevel?.toLowerCase().includes(filterDiff));
-    if (sortOrder === 'az') processed.sort((a, b) => a.title.localeCompare(b.title));
-    else if (sortOrder === 'za') processed.sort((a, b) => b.title.localeCompare(a.title));
-    return processed;
-  };
-
   const FilterComponent = () => (
     <div style={{ display: 'flex', gap: '10px', marginBottom: '15px', backgroundColor: COLORS.WHITE, padding: '10px', borderRadius: '8px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
       <select value={filterDiff} onChange={(e) => { setFilterDiff(e.target.value); setCurrentPage(1); }} style={{ flex: 1, padding: '8px', borderRadius: '4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '14px' }}>
@@ -620,258 +556,46 @@ export default function MasterController() {
 
         {!loading && !showSplash && (
           <>
-            {/* EXTRACTED VIEWS */}
             {currentView.type === 'HOME' && (
               <HomeView 
-                user={user}
-                profile={profile}
-                queryInput={queryInput}
-                setQueryInput={setQueryInput}
-                handleSearch={handleSearch}
-                isSearchingDances={isSearchingDances}
-                results={results}
-                paginatedList={paginatedList}
-                setResults={setResults}
-                loadDanceDetails={loadDanceDetails}
-                newPostContent={newPostContent}
-                setNewPostContent={setNewPostContent}
-                newPostVisibility={newPostVisibility}
-                setNewPostVisibility={setNewPostVisibility}
-                isPosting={isPosting}
-                handleCreatePost={handleCreatePost}
-                feedPosts={feedPosts}
-                handleLikePost={handleLikePost}
-                commentInputs={commentInputs}
-                setCommentInputs={setCommentInputs}
-                handleAddComment={handleAddComment}
+                user={user} profile={profile} queryInput={queryInput} setQueryInput={setQueryInput} handleSearch={handleSearch} isSearchingDances={isSearchingDances} results={results} paginatedList={paginatedList} setResults={setResults} loadDanceDetails={loadDanceDetails} newPostContent={newPostContent} setNewPostContent={setNewPostContent} newPostVisibility={newPostVisibility} setNewPostVisibility={setNewPostVisibility} isPosting={isPosting} handleCreatePost={handleCreatePost} feedPosts={feedPosts} handleLikePost={handleLikePost} commentInputs={commentInputs} setCommentInputs={setCommentInputs} handleAddComment={handleAddComment}
               />
             )}
 
             {currentView.type === 'ACCOUNT' && (
               <AccountView 
-                user={user}
-                profile={profile}
-                setProfile={setProfile}
-                isEditingProfile={isEditingProfile}
-                setIsEditingProfile={setIsEditingProfile}
-                usernameStatus={usernameStatus}
-                checkUsername={checkUsername}
-                saveProfile={saveProfile}
-                profileMessage={profileMessage}
-                isUploadingPhoto={isUploadingPhoto}
-                handlePhotoUpload={handlePhotoUpload}
-                handleDeleteAccount={handleDeleteAccount}
-                pullFromCloud={pullFromCloud}
-                pushToCloud={pushToCloud}
-                playlists={playlists}
-                syncMessage={syncMessage}
-                signOut={signOut}
-                auth={auth}
-                handleGoogle={handleGoogle}
-                handleAuth={handleAuth}
-                isLoginView={isLoginView}
-                setIsLoginView={setIsLoginView}
-                email={email}
-                setEmail={setEmail}
-                password={password}
-                setPassword={setPassword}
-                showPassword={showPassword}
-                setShowPassword={setShowPassword}
-                handlePasswordReset={handlePasswordReset}
-                authMessage={authMessage}
-                loadUserList={loadUserList}
-                currentView={currentView}
+                user={user} profile={profile} setProfile={setProfile} isEditingProfile={isEditingProfile} setIsEditingProfile={setIsEditingProfile} usernameStatus={usernameStatus} checkUsername={checkUsername} saveProfile={saveProfile} profileMessage={profileMessage} isUploadingPhoto={isUploadingPhoto} handlePhotoUpload={handlePhotoUpload} handleDeleteAccount={handleDeleteAccount} pullFromCloud={pullFromCloud} pushToCloud={pushToCloud} playlists={playlists} syncMessage={syncMessage} signOut={signOut} auth={auth} handleGoogle={handleGoogle} handleAuth={handleAuth} isLoginView={isLoginView} setIsLoginView={setIsLoginView} email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} handlePasswordReset={handlePasswordReset} authMessage={authMessage} loadUserList={loadUserList} currentView={currentView}
               />
             )}
 
-            {/* VIEWS STILL INSIDE MASTER CONTROLLER */}
-            {currentView.type === 'USER_LIST' && (
-              <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
-                <h2 style={{ color: COLORS.PRIMARY, textAlign: 'center', marginBottom: '20px' }}>{currentView.listTitle}</h2>
-                
-                {isLoadingUserList ? (
-                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, marginTop: '20px' }}>Loading users...</div>
-                ) : userListResults.length === 0 ? (
-                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, marginTop: '20px' }}>No users found.</div>
-                ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                        {userListResults.map(targetUser => (
-                            <div key={targetUser.uid} onClick={() => setCurrentView({ type: 'OTHER_PROFILE', targetProfile: targetUser })} style={{ backgroundColor: '#F9F9F9', padding: '15px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '15px', cursor: 'pointer', border: '1px solid #EEE' }}>
-                                {targetUser.photoUrl ? (
-                                    <img src={targetUser.photoUrl} alt="Profile" style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover' }} />
-                                ) : (
-                                    <div style={{ width: '50px', height: '50px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#999' }}>👤</div>
-                                )}
-                                <div style={{ flex: 1 }}>
-                                    <div style={{ fontWeight: 'bold', color: '#333' }}>{targetUser.firstName} {targetUser.lastName}</div>
-                                    <div style={{ fontSize: '13px', color: COLORS.PRIMARY }}>@{targetUser.username}</div>
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                )}
-              </div>
-            )}
-
-            {currentView.type === 'DANCE_PROFILE' && (
-              <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
-                <h1 style={{ fontSize: '1.8rem', marginBottom: '8px', fontWeight: 800, color: '#333' }}>{currentView.dance.title.toLowerCase()}</h1>
-                <div style={{ color: COLORS.SECONDARY, fontWeight: 'bold', marginBottom: '24px', fontSize: '0.95rem' }}>{currentView.dance.difficultyLevel.toLowerCase()} • {currentView.dance.counts} counts • {currentView.dance.wallCount} walls</div>
-                <div style={{ backgroundColor: '#F5F5F7', padding: '15px', borderRadius: '8px', marginBottom: '30px' }}><p style={{ margin: '0 0 5px 0' }}><strong>Song:</strong> {currentView.dance.songTitle.toLowerCase()}</p><p style={{ margin: 0 }}><strong>Artist:</strong> {currentView.dance.songArtist.toLowerCase()}</p></div>
-                <div style={{ marginBottom: '30px' }}>
-                  <h3 style={{ fontSize: '1.1rem', marginBottom: '12px', color: '#555' }}>Add to Playlist:</h3>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {Object.keys(playlists).map(name => {
-                      const isAdded = (playlists[name] || []).some(d => d.id === currentView.dance.id);
-                      return (
-                        <button key={name} onClick={() => addToPlaylist(currentView.dance, name)} disabled={isAdded} style={{ flex: '1 1 auto', backgroundColor: isAdded ? '#81C784' : (activeBtn === name ? COLORS.SECONDARY : COLORS.PRIMARY), color: COLORS.WHITE, border: 'none', padding: '10px 16px', borderRadius: '6px', fontWeight: '600', cursor: isAdded ? 'default' : 'pointer' }}>{isAdded ? '✓ Added' : name}</button>
-                      );
-                    })}
-                  </div>
-                </div>
-                <div style={{ borderTop: `1px solid ${COLORS.PRIMARY}30`, paddingTop: '20px' }}>
-                  <h3 style={{ fontSize: '1.4rem', marginBottom: '15px', color: COLORS.PRIMARY }}>Step Sheet</h3>
-                  <div style={{ backgroundColor: '#FAFAFA', padding: '20px', borderRadius: '8px', fontSize: '14px', color: '#333', border: '1px solid #EEE' }}>
-                    {currentView.dance.stepSheetContent && currentView.dance.stepSheetContent.length > 0 ? (
-                      currentView.dance.stepSheetContent.map((row: any, idx: number) => (
-                        <div key={idx} style={{ marginBottom: '8px' }}>
-                          {(row?.heading || row?.title) && <div style={{ fontWeight: 'bold', color: COLORS.PRIMARY, marginTop: '12px', textTransform: 'uppercase' }}>{row.heading || row.title}</div>}
-                          {(row?.text || row?.description || row?.instruction) && <div style={{ display: 'flex' }}>{row?.counts && <span style={{ fontWeight: 'bold', width: '40px', flexShrink: 0 }}>{row.counts}</span>}<span>{row.text || row.description || row.instruction}</span></div>}
-                          {row?.note && <div style={{ fontStyle: 'italic', fontSize: '0.85rem', color: '#777', marginLeft: '40px' }}>Note: {row.note}</div>}
-                        </div>
-                      ))
-                    ) : <div style={{ opacity: 0.5 }}>Step sheet not found in database.</div>}
-                  </div>
-                  {currentView.dance.originalStepSheetUrl && <div style={{ marginTop: '20px', textAlign: 'center' }}><a href={currentView.dance.originalStepSheetUrl} target="_blank" rel="noreferrer" style={{ color: COLORS.PRIMARY, fontWeight: 'bold' }}>View Original Sheet ↗</a></div>}
-                </div>
-              </div>
-            )}
-
-            {currentView.type === 'PLAYLISTS_LIST' && (
-              <div>
-                <div style={{ display: 'flex', gap: '10px', marginBottom: '20px' }}><input value={newPlaylistName} onChange={e => setNewPlaylistName(e.target.value)} placeholder="New playlist name..." style={{ flex: 1, padding: '10px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, fontSize: '16px' }} /><button onClick={createPlaylist} style={{ backgroundColor: COLORS.PRIMARY, color: COLORS.WHITE, border: 'none', padding: '10px 20px', borderRadius: '8px', fontSize: '20px', fontWeight: 'bold', cursor: 'pointer' }}>+</button></div>
-                {Object.keys(playlists).map(name => (
-                  <div key={name} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', marginBottom: '10px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => navigateTo({ type: 'PLAYLIST_DETAIL', name })} style={{ flex: 1, cursor: 'pointer' }}><h2 style={{ fontSize: '1.2rem', margin: 0, color: COLORS.PRIMARY }}>{name}</h2><span style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{playlists[name].length} dances</span></div>
-                    <button onClick={() => deletePlaylist(name)} style={{ background: 'none', border: 'none', color: COLORS.SECONDARY, fontSize: '24px', cursor: 'pointer' }}>×</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {currentView.type === 'PLAYLIST_DETAIL' && (
-              <div>
-                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: 'none', fontWeight: 'bold', cursor: 'pointer', marginBottom: '20px', fontSize: '16px' }}>← Back to Playlists</button>
-                <h2 style={{ fontSize: '1.8rem', marginBottom: '20px', color: COLORS.PRIMARY }}>{currentView.name}</h2>
-                
-                {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
-                
-                {playlists[currentView.name] ? paginatedList.map((d: Dance) => (
-                  <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                    <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
-                    <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px', cursor: 'pointer' }}>Remove</button>
-                  </div>
-                )) : <div style={{ color: 'red' }}>Error: Playlist not found.</div>}
-                
-                {displayList.length > itemsPerPage && (
-                  <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginTop: '20px', alignItems: 'center' }}>
-                    <button onClick={() => setCurrentPage(p => Math.max(p - 1, 1))} disabled={currentPage === 1} style={{ padding: '8px', cursor: currentPage === 1 ? 'default' : 'pointer', opacity: currentPage === 1 ? 0.5 : 1 }}>← Prev</button>
-                    <span>Page {currentPage} of {totalPages || 1}</span>
-                    <button onClick={() => setCurrentPage(p => Math.min(p + 1, totalPages))} disabled={currentPage === totalPages} style={{ padding: '8px', cursor: currentPage === totalPages ? 'default' : 'pointer', opacity: currentPage === totalPages ? 0.5 : 1 }}>Next →</button>
-                  </div>
-                )}
-              </div>
-            )}
-
             {currentView.type === 'COMMUNITY' && (
-              <div>
-                <h2 style={{ color: COLORS.PRIMARY, textAlign: 'center', marginBottom: '20px' }}>Find Dancers</h2>
-                <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '10px' }}>
-                  <input 
-                    value={communityQuery} 
-                    onChange={e => handleUserSearch(e.target.value)} 
-                    placeholder="Search usernames..." 
-                    style={{ padding: '12px', width: '100%', maxWidth: '400px', borderRadius: '8px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} 
-                  />
-                </div>
-                
-                {isSearchingCommunity && (
-                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, fontSize: '12px', marginBottom: '10px' }}>Searching...</div>
-                )}
-                
-                {communityResults.length === 0 && communityQuery && !isSearchingCommunity && (
-                    <div style={{ textAlign: 'center', color: COLORS.NEUTRAL, marginTop: '10px' }}>No users found matching "@{communityQuery}"</div>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px' }}>
-                    {communityResults.map(targetUser => (
-                        <div key={targetUser.uid} onClick={() => setCurrentView({ type: 'OTHER_PROFILE', targetProfile: targetUser })} style={{ backgroundColor: COLORS.WHITE, padding: '15px', borderRadius: '12px', display: 'flex', alignItems: 'center', gap: '15px', cursor: 'pointer', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                            {targetUser.photoUrl ? (
-                                <img src={targetUser.photoUrl} alt="Profile" style={{ width: '50px', height: '50px', borderRadius: '50%', objectFit: 'cover' }} />
-                            ) : (
-                                <div style={{ width: '50px', height: '50px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', color: '#999' }}>👤</div>
-                            )}
-                            <div style={{ flex: 1 }}>
-                                <div style={{ fontWeight: 'bold', color: '#333' }}>{targetUser.firstName} {targetUser.lastName}</div>
-                                <div style={{ fontSize: '13px', color: COLORS.PRIMARY }}>@{targetUser.username}</div>
-                            </div>
-                        </div>
-                    ))}
-                </div>
-              </div>
+              <CommunityView 
+                communityQuery={communityQuery} handleUserSearch={handleUserSearch} isSearchingCommunity={isSearchingCommunity} communityResults={communityResults} setCurrentView={setCurrentView}
+              />
             )}
 
             {currentView.type === 'OTHER_PROFILE' && (
-              <div style={{ backgroundColor: COLORS.WHITE, padding: '30px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
-                <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
-                <div style={{ textAlign: 'center' }}>
-                    {currentView.targetProfile.photoUrl ? (
-                        <img src={currentView.targetProfile.photoUrl} alt="Profile" style={{ width: '120px', height: '120px', borderRadius: '50%', objectFit: 'cover', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' }} />
-                    ) : (
-                        <div style={{ width: '120px', height: '120px', borderRadius: '50%', backgroundColor: '#E0E0E0', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto', border: `3px solid ${COLORS.PRIMARY}`, fontSize: '40px', color: '#999' }}>👤</div>
-                    )}
-                    {(currentView.targetProfile.firstName || currentView.targetProfile.lastName) && (
-                        <h2 style={{ color: '#333', marginTop: '15px', marginBottom: '5px' }}>{currentView.targetProfile.firstName} {currentView.targetProfile.lastName}</h2>
-                    )}
-                    <p style={{ fontWeight: 'bold', color: COLORS.PRIMARY, fontSize: '1.1rem', marginTop: (currentView.targetProfile.firstName || currentView.targetProfile.lastName) ? '0' : '15px', marginBottom: '15px' }}>@{currentView.targetProfile.username}</p>
-                    
-                    <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '15px', color: COLORS.NEUTRAL, fontSize: '14px' }}>
-                        <div onClick={() => loadUserList(`${currentView.targetProfile.firstName || 'User'}'s Followers`, currentView.targetProfile.followers || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
-                            <strong style={{ color: COLORS.PRIMARY }}>{currentView.targetProfile.followers?.length || 0}</strong> Followers
-                        </div>
-                        <div onClick={() => loadUserList(`Following`, currentView.targetProfile.following || [], currentView)} style={{ cursor: 'pointer', textDecoration: 'underline' }}>
-                            <strong style={{ color: COLORS.PRIMARY }}>{currentView.targetProfile.following?.length || 0}</strong> Following
-                        </div>
-                    </div>
+              <OtherProfileView 
+                handleBack={handleBack} targetProfile={currentView.targetProfile} loadUserList={loadUserList} currentView={currentView} currentUserProfile={profile} toggleFollow={toggleFollow}
+              />
+            )}
 
-                    {currentView.targetProfile.bio && (
-                        <p style={{ color: '#555', fontSize: '14px', maxWidth: '400px', margin: '0 auto 15px auto', fontStyle: 'italic' }}>"{currentView.targetProfile.bio}"</p>
-                    )}
-                    {currentView.targetProfile.location && (
-                        <p style={{ color: COLORS.NEUTRAL, fontSize: '13px', marginBottom: '20px' }}>📍 {currentView.targetProfile.location}</p>
-                    )}
-                    {currentView.targetProfile.uid && (
-                        <button 
-                            onClick={() => toggleFollow(currentView.targetProfile.uid!)} 
-                            style={{ 
-                                backgroundColor: profile.following.includes(currentView.targetProfile.uid) ? COLORS.WHITE : COLORS.PRIMARY, 
-                                color: profile.following.includes(currentView.targetProfile.uid) ? COLORS.PRIMARY : COLORS.WHITE, 
-                                border: `2px solid ${COLORS.PRIMARY}`, 
-                                padding: '10px 30px', 
-                                borderRadius: '20px', 
-                                fontWeight: 'bold', 
-                                cursor: 'pointer', 
-                                fontSize: '14px',
-                                transition: 'all 0.2s ease'
-                            }}
-                        >
-                            {profile.following.includes(currentView.targetProfile.uid) ? 'Following' : 'Follow'}
-                        </button>
-                    )}
-                </div>
-              </div>
+            {currentView.type === 'USER_LIST' && (
+              <UserListView
+                handleBack={handleBack} listTitle={currentView.listTitle} isLoadingUserList={isLoadingUserList} userListResults={userListResults} setCurrentView={setCurrentView}
+              />
+            )}
+
+            {currentView.type === 'DANCE_PROFILE' && (
+              <DanceProfileView
+                handleBack={handleBack} dance={currentView.dance} playlists={playlists} addToPlaylist={addToPlaylist} activeBtn={activeBtn}
+              />
+            )}
+
+            {(currentView.type === 'PLAYLISTS_LIST' || currentView.type === 'PLAYLIST_DETAIL') && (
+              <PlaylistsView
+                currentView={currentView} newPlaylistName={newPlaylistName} setNewPlaylistName={setNewPlaylistName} createPlaylist={createPlaylist} playlists={playlists} navigateTo={navigateTo} deletePlaylist={deletePlaylist} handleBack={handleBack} FilterComponent={FilterComponent} paginatedList={paginatedList} loadDanceDetails={loadDanceDetails} removeFromPlaylist={removeFromPlaylist} currentPage={currentPage} setCurrentPage={setCurrentPage} totalPages={totalPages}
+              />
             )}
           </>
         )}

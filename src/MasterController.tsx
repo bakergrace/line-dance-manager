@@ -1,139 +1,29 @@
 import { useState, useEffect } from 'react';
 
 // --- FIREBASE IMPORTS ---
-import { initializeApp } from "firebase/app";
 import { 
-  getAuth, signInWithPopup, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, signOut, onAuthStateChanged,
-  sendPasswordResetEmail, deleteUser
+  signInWithPopup, signInWithEmailAndPassword, createUserWithEmailAndPassword, 
+  signOut, onAuthStateChanged, sendPasswordResetEmail, deleteUser
 } from "firebase/auth";
 import type { User } from "firebase/auth"; 
-import { GoogleAuthProvider } from "firebase/auth";
 import { 
-  getFirestore, doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc, addDoc, updateDoc, arrayUnion, arrayRemove, orderBy
+  doc, setDoc, getDoc, collection, query, where, getDocs, deleteDoc, 
+  addDoc, updateDoc, arrayUnion, arrayRemove, orderBy
 } from "firebase/firestore"; 
-import { 
-  getStorage, ref, uploadBytes, getDownloadURL 
-} from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+
+// --- INTERNAL APP IMPORTS ---
+import { auth, db, storage, googleProvider } from './firebaseSetup';
+import type { Dance, UserProfile, Post, PostComment, AppView, ReturnPath } from './types';
+import { COLORS, STORAGE_KEYS, DEFAULT_PLAYLISTS, normalizeDanceData, getDifficultyColor } from './utils';
 
 // --- IMAGES ---
 import bootstepperLogo from './bootstepper-logo.png';
 import bootstepperMobileLogo from './bootstepper-logo-mobile.png';
 
-// --- SECURE CONFIGURATION ---
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY as string,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID as string,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID as string,
-  measurementId: import.meta.env.VITE_FIREBASE_MEASUREMENT_ID as string
-};
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
-const storage = getStorage(app);
-const googleProvider = new GoogleAuthProvider();
-
+// ENVIRONMENT VARIABLE CHECK: Matches your provided list exactly
 const API_KEY = import.meta.env.VITE_BOOTSTEPPER_API_KEY as string;
 const BASE_URL = '/api'; 
-
-const COLORS = {
-  BACKGROUND: '#EEEBE8', PRIMARY: '#36649A', SECONDARY: '#D99AB1',
-  WHITE: '#FFFFFF', NEUTRAL: '#9E9E9E', SUCCESS: '#4CAF50', ERROR: '#F44336'
-};
-
-const STORAGE_KEYS = {
-  PERMANENT: 'bootstepper_permanent_storage',
-  RECENT_SEARCHES: 'bootstepper_recent_searches'
-};
-
-const DEFAULT_PLAYLISTS = {
-  "dances i know": [], "dances i kinda know": [], "dances i want to know": []
-};
-
-// --- INTERFACES ---
-export interface Dance {
-  id: string; title: string; difficultyLevel: string; counts: number;
-  songTitle: string; songArtist: string; stepSheetContent?: any[]; 
-  originalStepSheetUrl?: string; stepSheetId?: string; wallCount: number;
-}
-
-export interface UserProfile {
-  uid?: string;
-  username: string; 
-  firstName: string; 
-  lastName: string;
-  bio: string; 
-  location: string; 
-  photoUrl: string;
-  following: string[];
-  followers: string[]; 
-}
-
-// FEED INTERFACES
-export interface PostComment {
-  id: string;
-  uid: string;
-  username: string;
-  photoUrl: string;
-  text: string;
-  timestamp: number;
-}
-
-export interface Post {
-  id: string;
-  authorUid: string;
-  authorUsername: string;
-  authorPhotoUrl: string;
-  content: string;
-  visibility: 'public' | 'followers' | 'friends' | 'private';
-  likes: string[]; // Array of UIDs
-  comments: PostComment[];
-  createdAt: number;
-}
-
-type ReturnPath = { type: 'SEARCH' } | { type: 'PLAYLIST_DETAIL'; name: string } | { type: 'COMMUNITY' } | { type: 'HOME' };
-type AppView = 
-  | { type: 'HOME' } // NEW DEFAULT VIEW
-  | { type: 'SEARCH' } 
-  | { type: 'PLAYLISTS_LIST' } 
-  | { type: 'PLAYLIST_DETAIL'; name: string } 
-  | { type: 'ACCOUNT' } 
-  | { type: 'COMMUNITY' }
-  | { type: 'OTHER_PROFILE'; targetProfile: UserProfile }
-  | { type: 'DANCE_PROFILE'; dance: Dance; returnPath: ReturnPath }
-  | { type: 'USER_LIST'; listTitle: string; uids: string[]; returnPath: AppView }; 
-
-// --- DATA SANITIZERS ---
-const cleanTitle = (title: string | undefined) => title ? String(title).replace(/\s*\([^)]*\)$/, '').trim() : "Untitled";
-
-const normalizeDanceData = (raw: any): Dance => {
-  if (!raw) return { id: 'error', title: 'Error', difficultyLevel: '', counts: 0, songTitle: '', songArtist: '', wallCount: 0 };
-  return {
-    id: String(raw.id || 'unknown-id'), title: cleanTitle(raw.title),
-    difficultyLevel: String(raw.difficultyLevel || 'Level Unknown'),
-    counts: typeof raw.counts === 'number' ? raw.counts : (Number(raw.count) || 0),
-    wallCount: typeof raw.walls === 'number' ? raw.walls : (Number(raw.wallCount) || 0),
-    songTitle: String(raw.songTitle || raw.danceSongs?.[0]?.song?.title || 'Unknown Song'),
-    songArtist: String(raw.songArtist || raw.danceSongs?.[0]?.song?.artist || 'Unknown Artist'),
-    stepSheetContent: Array.isArray(raw.stepSheetContent) ? raw.stepSheetContent : [],
-    originalStepSheetUrl: String(raw.originalStepSheetUrl || ''),
-    stepSheetId: String(raw.stepSheetId || raw.id)
-  };
-};
-
-const getDifficultyColor = (level: string) => {
-  const l = (level || '').toLowerCase();
-  if (l.includes('absolute')) return '#00BCD4';    
-  if (l.includes('beginner')) return '#4CAF50';    
-  if (l.includes('improver')) return '#FF9800';    
-  if (l.includes('intermediate')) return '#F44336'; 
-  if (l.includes('advanced')) return '#9C27B0';    
-  return COLORS.NEUTRAL; 
-};
 
 // --- COMPONENTS OUTSIDE CONTROLLER ---
 const DifficultyLegend = () => (
@@ -149,7 +39,7 @@ const DifficultyLegend = () => (
 // --- MAIN CONTROLLER ---
 export default function MasterController() {
   const [showSplash, setShowSplash] = useState(true);
-  const [currentView, setCurrentView] = useState<AppView>({ type: 'HOME' }); // Defaults to Home now
+  const [currentView, setCurrentView] = useState<AppView>({ type: 'HOME' }); 
   
   // Search State
   const [queryInput, setQueryInput] = useState('');
@@ -338,7 +228,8 @@ export default function MasterController() {
     try {
       if (hasLiked) {
         await updateDoc(postRef, { likes: arrayRemove(user.uid) });
-        setFeedPosts(feedPosts.map(p => p.id === postId ? { ...p, likes: p.likes.filter(id => id !== user.uid) } : p));
+        // FIXED: Added (id: string) to resolve the typescript error
+        setFeedPosts(feedPosts.map(p => p.id === postId ? { ...p, likes: p.likes.filter((id: string) => id !== user.uid) } : p));
       } else {
         await updateDoc(postRef, { likes: arrayUnion(user.uid) });
         setFeedPosts(feedPosts.map(p => p.id === postId ? { ...p, likes: [...p.likes, user.uid] } : p));
@@ -732,10 +623,9 @@ export default function MasterController() {
 
         {!loading && !showSplash && (
           <>
-            {/* NEW HOME / ACTIVITY FEED VIEW */}
+            {/* HOME / ACTIVITY FEED VIEW */}
             {currentView.type === 'HOME' && (
               <div style={{ paddingBottom: '60px' }}>
-                {/* 1. The Unified Search Bar at Top of Home */}
                 <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
                     <form onSubmit={(e) => { e.preventDefault(); handleSearch(queryInput); }} style={{ display: 'flex', justifyContent: 'center' }}>
                     <input value={queryInput} onChange={e => setQueryInput(e.target.value)} placeholder="Search dances to learn..." style={{ padding: '12px', width: '100%', maxWidth: '400px', borderRadius: '4px 0 0 4px', border: `1px solid ${COLORS.PRIMARY}`, outline: 'none', fontSize: '16px' }} />
@@ -744,14 +634,13 @@ export default function MasterController() {
                     
                     {isSearchingDances && <div style={{ textAlign: 'center', marginTop: '10px', color: COLORS.NEUTRAL }}>Searching database...</div>}
                     
-                    {/* Inline Search Results inside Home */}
                     {results.length > 0 && (
                         <div style={{ marginTop: '20px', borderTop: `1px solid #EEE`, paddingTop: '15px' }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
                                 <h3 style={{ margin: 0, color: COLORS.PRIMARY }}>Search Results</h3>
                                 <button onClick={() => setResults([])} style={{ background: 'none', border: 'none', color: COLORS.NEUTRAL, cursor: 'pointer', textDecoration: 'underline' }}>Clear</button>
                             </div>
-                            {paginatedList.map(d => (
+                            {paginatedList.map((d: Dance) => (
                                 <div key={d.id} onClick={() => loadDanceDetails(d, { type: 'HOME' })} style={{ backgroundColor: '#F9F9F9', padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', border: '1px solid #EEE' }}>
                                 <div><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
                                 <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: getDifficultyColor(d.difficultyLevel) }} />
@@ -761,7 +650,6 @@ export default function MasterController() {
                     )}
                 </div>
 
-                {/* 2. The Post Composer */}
                 {user && profile.username && (
                     <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)', marginBottom: '20px' }}>
                         <div style={{ display: 'flex', gap: '15px', alignItems: 'flex-start' }}>
@@ -801,7 +689,6 @@ export default function MasterController() {
                     </div>
                 )}
 
-                {/* 3. The Activity Feed */}
                 <div>
                     <h3 style={{ color: COLORS.PRIMARY, borderBottom: '2px solid #EEE', paddingBottom: '10px', marginBottom: '15px' }}>Activity Feed</h3>
                     {!user ? (
@@ -812,7 +699,6 @@ export default function MasterController() {
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
                             {feedPosts.map(post => (
                                 <div key={post.id} style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.05)' }}>
-                                    {/* Post Header */}
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '15px', marginBottom: '15px' }}>
                                         {post.authorPhotoUrl ? (
                                             <img src={post.authorPhotoUrl} alt={post.authorUsername} style={{ width: '40px', height: '40px', borderRadius: '50%', objectFit: 'cover' }} />
@@ -827,12 +713,10 @@ export default function MasterController() {
                                         </div>
                                     </div>
                                     
-                                    {/* Post Content */}
                                     <div style={{ fontSize: '15px', color: '#333', marginBottom: '15px', lineHeight: '1.5' }}>
                                         {post.content}
                                     </div>
 
-                                    {/* Post Actions */}
                                     <div style={{ display: 'flex', gap: '20px', borderTop: '1px solid #EEE', paddingTop: '10px', borderBottom: '1px solid #EEE', paddingBottom: '10px' }}>
                                         <button 
                                             onClick={() => handleLikePost(post.id, post.likes)}
@@ -845,16 +729,15 @@ export default function MasterController() {
                                         </div>
                                     </div>
 
-                                    {/* Comments Section */}
+                                    {/* FIXED: Added (comment: PostComment) to resolve the typescript error */}
                                     <div style={{ marginTop: '15px' }}>
-                                        {(post.comments || []).map(comment => (
+                                        {(post.comments || []).map((comment: PostComment) => (
                                             <div key={comment.id} style={{ display: 'flex', gap: '10px', marginBottom: '10px', backgroundColor: '#F9F9F9', padding: '10px', borderRadius: '8px' }}>
                                                 <div style={{ fontWeight: 'bold', fontSize: '13px', color: COLORS.PRIMARY }}>@{comment.username}:</div>
                                                 <div style={{ fontSize: '13px', color: '#444' }}>{comment.text}</div>
                                             </div>
                                         ))}
                                         
-                                        {/* Add Comment */}
                                         <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
                                             <input 
                                                 value={commentInputs[post.id] || ''}
@@ -871,7 +754,6 @@ export default function MasterController() {
                                             </button>
                                         </div>
                                     </div>
-
                                 </div>
                             ))}
                         </div>
@@ -880,7 +762,6 @@ export default function MasterController() {
               </div>
             )}
 
-            {/* PHASE 3: New User List Screen */}
             {currentView.type === 'USER_LIST' && (
               <div style={{ backgroundColor: COLORS.WHITE, padding: '20px', borderRadius: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.08)' }}>
                 <button onClick={handleBack} style={{ background: 'none', color: COLORS.PRIMARY, border: `1px solid ${COLORS.PRIMARY}`, padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', marginBottom: '20px', fontWeight: 'bold' }}>← Back</button>
@@ -964,7 +845,7 @@ export default function MasterController() {
                 
                 {playlists[currentView.name] && playlists[currentView.name].length > 0 && <FilterComponent />}
                 
-                {playlists[currentView.name] ? paginatedList.map(d => (
+                {playlists[currentView.name] ? paginatedList.map((d: Dance) => (
                   <div key={`${currentView.name}-${d.id}`} style={{ backgroundColor: COLORS.WHITE, padding: '12px', borderRadius: '8px', marginBottom: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                     <div onClick={() => loadDanceDetails(d, { type: 'PLAYLIST_DETAIL', name: currentView.name })} style={{ cursor: 'pointer', flex: 1 }}><div style={{ fontWeight: 'bold', color: COLORS.PRIMARY }}>{d.title}</div><div style={{ fontSize: '12px', color: COLORS.SECONDARY }}>{d.songTitle}</div></div>
                     <button onClick={() => removeFromPlaylist(d.id, currentView.name)} style={{ color: COLORS.SECONDARY, background: 'none', border: `1px solid ${COLORS.SECONDARY}`, padding: '4px 8px', borderRadius: '4px', fontSize: '11px', marginLeft: '10px', cursor: 'pointer' }}>Remove</button>
